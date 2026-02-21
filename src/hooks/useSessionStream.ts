@@ -40,15 +40,20 @@ export function useSessionStream({ sessionCode, role }: UseSessionStreamOptions)
         }
       })
       .on('broadcast', { event: 'stream:stop' }, () => {
-        setIsPresenterStreaming(false);
-        setCurrentFrame(null);
+        if (role === 'viewer') {
+          setIsPresenterStreaming(false);
+          setCurrentFrame(null);
+        }
       });
 
     channel.subscribe();
     channelRef.current = channel;
 
     return () => {
-      stopBroadcasting();
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
       supabase.removeChannel(channel);
     };
   }, [sessionCode, role]);
