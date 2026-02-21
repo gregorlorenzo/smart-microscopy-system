@@ -118,11 +118,11 @@ export default function SessionLobbyPage() {
                   : 'Connecting to session...'}
               </p>
             ) : (
-              participants.map((p, i) => {
+              participants.map((p) => {
                 const isYou = p.name === sessionInfo.participantName;
                 return (
                   <div
-                    key={i}
+                    key={p.name}
                     className={`flex items-center justify-between p-3 rounded-lg border ${
                       isYou
                         ? 'bg-blue-50 border-blue-200'
