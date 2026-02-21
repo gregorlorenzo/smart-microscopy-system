@@ -107,13 +107,11 @@ export default function SessionStreamPage() {
     const handleChange = () => broadcastAnnotations(exportJSON());
 
     fabricCanvas.on('path:created', handleChange);
-    fabricCanvas.on('object:added', handleChange);
     fabricCanvas.on('object:modified', handleChange);
     fabricCanvas.on('object:removed', handleChange);
 
     return () => {
       fabricCanvas.off('path:created', handleChange);
-      fabricCanvas.off('object:added', handleChange);
       fabricCanvas.off('object:modified', handleChange);
       fabricCanvas.off('object:removed', handleChange);
     };
