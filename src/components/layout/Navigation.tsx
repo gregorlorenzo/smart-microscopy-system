@@ -5,8 +5,8 @@ export default function Navigation() {
   const location = useLocation();
 
   const navItems = [
-    { path: '/', label: 'Microscope', icon: Camera },
-    { path: '/library', label: 'Library', icon: Library },
+    { path: '/standalone', label: 'Microscope', icon: Camera },
+    { path: '/standalone/library', label: 'Library', icon: Library },
   ];
 
   return (
