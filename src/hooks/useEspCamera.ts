@@ -1,10 +1,43 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 const POLL_INTERVAL_MS = 500;
-const TIMEOUT_MS = 3000;
+/**
+ * Raised from 3 s → 8 s so high-resolution JPEG captures
+ * (OV3660 QXGA etc.) don't time-out before the ESP32 responds.
+ */
+const TIMEOUT_MS = 8000;
+
+/**
+ * Normalise whatever the user typed into a scheme-less base URL:
+ *   "192.168.1.28"            → "http://192.168.1.28"
+ *   "192.168.1.28:80"         → "http://192.168.1.28:80"
+ *   "https://abc.ngrok-free.app" → "https://abc.ngrok-free.app"
+ *
+ * This lets presenters paste an ngrok HTTPS tunnel URL to bypass the
+ * browser mixed-content block when the app is served from Vercel (HTTPS).
+ */
+function buildBaseUrl(input: string): string {
+  const trimmed = input.trim().replace(/\/$/, '');
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+  // Mirror the host page's protocol so bare hostnames work without typing a scheme:
+  //   On Vercel (https:)  → "bilious-…ngrok-free.app" becomes "https://bilious-…"
+  //   On localhost (http:) → "192.168.1.28" stays   "http://192.168.1.28"
+  const defaultScheme =
+    typeof window !== 'undefined' && window.location.protocol === 'https:'
+      ? 'https'
+      : 'http';
+  return `${defaultScheme}://${trimmed}`;
+}
 
 interface UseEspCameraOptions {
-  /** IP address entered by the presenter, e.g. "192.168.1.105" */
+  /**
+   * IP address OR full URL entered by the presenter.
+   * Examples:
+   *   "192.168.1.28"                  (local network, use from local http:// page)
+   *   "https://abc.ngrok-free.app"    (ngrok tunnel, works from Vercel HTTPS)
+   */
   ip: string;
   /** Set to true when "ESP32-CAM" is selected as camera source */
   enabled: boolean;
@@ -38,7 +71,8 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
     setIsConnecting(true);
     setError(null);
     try {
-      const res = await fetch(`http://${testIp}/capture`, {
+      const base = buildBaseUrl(testIp);
+      const res = await fetch(`${base}/capture`, {
         mode: 'cors',
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });
@@ -49,13 +83,13 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
       setIsConnecting(false);
       return true;
     } catch (err: any) {
-      const isCors =
+      const isNetworkBlock =
         err?.message === 'Failed to fetch' || err?.name === 'TypeError';
       setError(
-        isCors
-          ? 'CORS blocked. Add to capture_handler in app_httpd.cpp:\n' +
-            'httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");'
-          : 'Cannot reach ESP32. Check IP and confirm same WiFi.'
+        isNetworkBlock
+          ? 'Mixed-content blocked (app is HTTPS, ESP32 is HTTP). ' +
+          'Run: ngrok http 192.168.1.28:80  then paste the https:// URL here.'
+          : 'Cannot reach ESP32. Check IP/URL and confirm same WiFi, or use an ngrok tunnel.'
       );
       setIsConnected(false);
       setIsConnecting(false);
@@ -74,7 +108,7 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
       // Skip tick if a mid-interval disconnect has already occurred
       if (!isConnectedRef.current) return;
       try {
-        const res = await fetch(`http://${ip}/capture`, {
+        const res = await fetch(`${buildBaseUrl(ip)}/capture`, {
           mode: 'cors',
           signal: AbortSignal.timeout(TIMEOUT_MS),
         });
