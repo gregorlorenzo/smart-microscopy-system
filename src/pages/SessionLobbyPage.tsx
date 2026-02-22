@@ -26,7 +26,7 @@ export default function SessionLobbyPage() {
   }, [code, navigate]);
 
   const { participants, resolvedSessionName } = useSessionPresence({
-    sessionCode: code || '',
+    sessionCode: sessionInfo ? (code || '') : '',
     participantName: sessionInfo?.participantName || '',
     role: sessionInfo?.role || 'viewer',
     sessionName: sessionInfo?.role === 'presenter' ? sessionInfo.name : undefined,

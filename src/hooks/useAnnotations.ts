@@ -4,8 +4,15 @@ import { Canvas, IText, PencilBrush, FabricImage } from 'fabric';
 export type DrawMode = 'select' | 'pen' | 'text' | 'none';
 
 export function useAnnotations(initialWidth = 800, initialHeight = 600) {
-  const containerRef = useRef<HTMLDivElement>(null);
+  // Callback ref pattern: triggers re-render (and effect re-run) when the container mounts.
+  // useRef alone would not re-run effects when containerRef.current changes.
+  const [containerEl, setContainerEl] = useState<HTMLDivElement | null>(null);
+  const containerRef = useCallback((el: HTMLDivElement | null) => {
+    setContainerEl(el);
+  }, []);
+
   const fabricCanvasRef = useRef<Canvas | null>(null);
+  const [canvasReady, setCanvasReady] = useState(false);
   const drawModeRef = useRef<DrawMode>('none');
   const brushColorRef = useRef('#ff0000');
   const [drawMode, setDrawMode] = useState<DrawMode>('none');
@@ -23,13 +30,15 @@ export function useAnnotations(initialWidth = 800, initialHeight = 600) {
     brushColorRef.current = brushColor;
   }, [brushColor]);
 
-  // Initialize Fabric.js canvas
+  // Initialize Fabric.js canvas once the container element is mounted.
+  // containerEl is state (not a ref), so this effect correctly re-runs when the
+  // container div mounts — even if that happens after the initial render.
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerEl) return;
 
     // Create a fresh canvas element each time (avoids React strict mode double-init issues)
     const canvasEl = document.createElement('canvas');
-    containerRef.current.appendChild(canvasEl);
+    containerEl.appendChild(canvasEl);
 
     const canvas = new Canvas(canvasEl, {
       width: initialWidth,
@@ -38,6 +47,7 @@ export function useAnnotations(initialWidth = 800, initialHeight = 600) {
     });
 
     fabricCanvasRef.current = canvas;
+    setCanvasReady(true);
 
     // Track undo state
     const updateUndoRedo = () => {
@@ -76,12 +86,11 @@ export function useAnnotations(initialWidth = 800, initialHeight = 600) {
 
     return () => {
       canvas.dispose();
-      // Fully clean up - remove all DOM elements Fabric.js created
-      if (containerRef.current) {
-        containerRef.current.innerHTML = '';
-      }
+      containerEl.innerHTML = '';
+      fabricCanvasRef.current = null;
+      setCanvasReady(false);
     };
-  }, [initialWidth, initialHeight]);
+  }, [containerEl, initialWidth, initialHeight]);
 
   // Set drawing mode
   const setMode = useCallback((mode: DrawMode) => {
@@ -176,11 +185,11 @@ export function useAnnotations(initialWidth = 800, initialHeight = 600) {
     });
   }, []);
 
-  // Load canvas from JSON
+  // Load canvas from JSON (Fabric.js v7 returns a Promise; second arg is a reviver, not a callback)
   const loadJSON = useCallback((json: any) => {
     if (!fabricCanvasRef.current) return;
-    fabricCanvasRef.current.loadFromJSON(json, () => {
-      fabricCanvasRef.current?.renderAll();
+    fabricCanvasRef.current.loadFromJSON(json).then(() => {
+      fabricCanvasRef.current?.requestRenderAll();
     });
   }, []);
 
@@ -231,7 +240,9 @@ export function useAnnotations(initialWidth = 800, initialHeight = 600) {
 
   return {
     containerRef,
-    fabricCanvas: fabricCanvasRef.current,
+    // canvasReady triggers a re-render when the canvas is initialized, so consumers
+    // see a non-null fabricCanvas and their own effects fire correctly.
+    fabricCanvas: canvasReady ? fabricCanvasRef.current : null,
     drawMode,
     brushColor,
     brushSize,
