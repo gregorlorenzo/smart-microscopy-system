@@ -8,27 +8,40 @@ const POLL_INTERVAL_MS = 500;
 const TIMEOUT_MS = 8000;
 
 /**
- * Normalise whatever the user typed into a scheme-less base URL:
- *   "192.168.1.28"            → "http://192.168.1.28"
- *   "192.168.1.28:80"         → "http://192.168.1.28:80"
- *   "https://abc.ngrok-free.app" → "https://abc.ngrok-free.app"
- *
- * This lets presenters paste an ngrok HTTPS tunnel URL to bypass the
- * browser mixed-content block when the app is served from Vercel (HTTPS).
+ * Normalise whatever the user typed into a full base URL:
+ *   "192.168.1.28"                → "http://192.168.1.28"
+ *   "192.168.1.28:80"             → "http://192.168.1.28:80"
+ *   "https://abc.ngrok-free.app"  → "https://abc.ngrok-free.app"
  */
 function buildBaseUrl(input: string): string {
   const trimmed = input.trim().replace(/\/$/, '');
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
     return trimmed;
   }
-  // Mirror the host page's protocol so bare hostnames work without typing a scheme:
-  //   On Vercel (https:)  → "bilious-…ngrok-free.app" becomes "https://bilious-…"
-  //   On localhost (http:) → "192.168.1.28" stays   "http://192.168.1.28"
+  // Mirror the host page's protocol so bare hostnames work without typing a scheme
   const defaultScheme =
     typeof window !== 'undefined' && window.location.protocol === 'https:'
       ? 'https'
       : 'http';
   return `${defaultScheme}://${trimmed}`;
+}
+
+/**
+ * Build the fetch URL for /capture.
+ *
+ * On Vercel (HTTPS) we route through `/api/esp32-proxy` which fetches
+ * the ESP32 server-side — this bypasses both CORS and ngrok's free-tier
+ * HTML interstitial page.
+ *
+ * On localhost (HTTP) we hit the ESP32 directly.
+ */
+function captureUrl(baseUrl: string): string {
+  const isProduction =
+    typeof window !== 'undefined' && window.location.protocol === 'https:';
+  if (isProduction) {
+    return `/api/esp32-proxy?url=${encodeURIComponent(`${baseUrl}/capture`)}`;
+  }
+  return `${baseUrl}/capture`;
 }
 
 interface UseEspCameraOptions {
@@ -72,13 +85,9 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
     setError(null);
     try {
       const base = buildBaseUrl(testIp);
-      const res = await fetch(`${base}/capture`, {
-        mode: 'cors',
+      const url = captureUrl(base);
+      const res = await fetch(url, {
         signal: AbortSignal.timeout(TIMEOUT_MS),
-        // Accept: image/jpeg bypasses the ngrok free-tier HTML interstitial
-        // without adding a custom header (custom headers trigger a CORS
-        // preflight that the ESP32's HTTP server cannot handle).
-        headers: { Accept: 'image/jpeg' },
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const ct = res.headers.get('content-type') ?? '';
@@ -91,9 +100,8 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
         err?.message === 'Failed to fetch' || err?.name === 'TypeError';
       setError(
         isNetworkBlock
-          ? 'Mixed-content blocked (app is HTTPS, ESP32 is HTTP). ' +
-          'Run: ngrok http 192.168.1.28:80  then paste the https:// URL here.'
-          : 'Cannot reach ESP32. Check IP/URL and confirm same WiFi, or use an ngrok tunnel.'
+          ? 'Cannot reach ESP32. Check IP/URL and confirm same WiFi, or use an ngrok tunnel.'
+          : `Cannot reach ESP32: ${err?.message ?? 'Unknown error'}`,
       );
       setIsConnected(false);
       setIsConnecting(false);
@@ -112,10 +120,10 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
       // Skip tick if a mid-interval disconnect has already occurred
       if (!isConnectedRef.current) return;
       try {
-        const res = await fetch(`${buildBaseUrl(ip)}/capture`, {
-          mode: 'cors',
+        const base = buildBaseUrl(ip);
+        const url = captureUrl(base);
+        const res = await fetch(url, {
           signal: AbortSignal.timeout(TIMEOUT_MS),
-          headers: { Accept: 'image/jpeg' },
         });
         if (!res.ok) {
           setIsConnected(false);
