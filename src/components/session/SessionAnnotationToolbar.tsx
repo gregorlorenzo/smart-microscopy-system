@@ -21,6 +21,7 @@ interface SessionAnnotationToolbarProps {
   recordingTime: number;
   onStartRecording: () => void;
   onStopRecording: () => void;
+  recordingEnabled?: boolean;  // default true
 }
 
 const COLORS = [
@@ -41,6 +42,7 @@ export default function SessionAnnotationToolbar({
   onModeChange, onColorChange, onSizeChange, onUndo, onClear,
   captureReady, onCapture, onSave,
   isRecording, recordingTime, onStartRecording, onStopRecording,
+  recordingEnabled = true,
 }: SessionAnnotationToolbarProps) {
   const btn = (active: boolean, disabled = false) =>
     `w-9 h-9 rounded-lg flex items-center justify-center transition-colors ${
@@ -101,17 +103,23 @@ export default function SessionAnnotationToolbar({
       <div className="w-px h-6 bg-gray-700 mx-1" />
 
       {/* Video recording */}
-      {isRecording ? (
-        <button
-          className="h-9 px-3 rounded-lg flex items-center gap-2 bg-red-600 hover:bg-red-500 text-white text-xs font-semibold transition-colors"
-          onClick={onStopRecording}
-          title="Stop recording"
-        >
-          <Square className="w-3.5 h-3.5 fill-current" />
-          {formatTime(recordingTime)}
-        </button>
+      {recordingEnabled ? (
+        isRecording ? (
+          <button
+            className="h-9 px-3 rounded-lg flex items-center gap-2 bg-red-600 hover:bg-red-500 text-white text-xs font-semibold transition-colors"
+            onClick={onStopRecording}
+            title="Stop recording"
+          >
+            <Square className="w-3.5 h-3.5 fill-current" />
+            {formatTime(recordingTime)}
+          </button>
+        ) : (
+          <button className={btn(false)} onClick={onStartRecording} title="Record video">
+            <Video className="w-4 h-4" />
+          </button>
+        )
       ) : (
-        <button className={btn(false)} onClick={onStartRecording} title="Record video">
+        <button className={btn(false, true)} disabled title="Recording not available for ESP32-CAM">
           <Video className="w-4 h-4" />
         </button>
       )}

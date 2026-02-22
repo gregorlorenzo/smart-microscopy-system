@@ -75,15 +75,20 @@ export default function SessionStreamPage() {
     testConnection: testEspConnection,
   } = useEspCamera({ ip: espIp, enabled: cameraSource === 'esp32' });
 
+  // Mirror isLive into a ref so cleanup callbacks can read the current value
+  // without being listed in effect dependency arrays.
+  const isLiveRef = useRef(false);
+  useEffect(() => { isLiveRef.current = isLive; }, [isLive]);
+
   // Webcam: start camera for preview on setup screen (and keep alive when live)
   useEffect(() => {
     if (!isPresenter || !sessionInfo || cameraSource !== 'webcam') return;
     startCamera();
     return () => {
-      stopBroadcasting();
+      if (isLiveRef.current) stopBroadcasting();
       stopCamera();
     };
-  }, [isPresenter, sessionInfo, cameraSource]);
+  }, [isPresenter, sessionInfo, cameraSource, startCamera, stopBroadcasting, stopCamera]);
 
   // Webcam: start broadcasting once live and camera stream is ready
   useEffect(() => {
@@ -91,7 +96,7 @@ export default function SessionStreamPage() {
     if (isStreaming && videoRef.current) {
       startBroadcasting(videoRef.current);
     }
-  }, [isPresenter, isLive, cameraSource, isStreaming]);
+  }, [isPresenter, isLive, cameraSource, isStreaming, startBroadcasting]);
 
   // ESP32: broadcast each new frame when live
   useEffect(() => {
@@ -232,20 +237,20 @@ export default function SessionStreamPage() {
     setShowSaveDialog(false);
   }, [capturedImage, recordedVideo]);
 
-  const handleStartRecording = async () => {
+  const handleStartRecording = useCallback(async () => {
     const stream = videoRef.current?.srcObject as MediaStream | null;
     if (!stream) return;
     await startRecording(stream);
-  };
+  }, [startRecording]);
 
-  const handleStopRecording = async () => {
+  const handleStopRecording = useCallback(async () => {
     const blob = await stopRecording();
     if (blob.size > 0) {
       setRecordedVideo(blob);
     } else {
       console.warn('[Capture] Recording stopped with no data');
     }
-  };
+  }, [stopRecording]);
 
   if (!sessionInfo) return null;
 
@@ -443,12 +448,14 @@ export default function SessionStreamPage() {
 
         {/* Presenter: show webcam or ESP32-CAM feed */}
         {isPresenter && (
-          cameraSource === 'esp32' && currentEspFrame ? (
-            <img
-              src={currentEspFrame}
-              alt="ESP32-CAM feed"
-              style={{ width: CANVAS_W, height: CANVAS_H, objectFit: 'cover' }}
-            />
+          cameraSource === 'esp32' ? (
+            currentEspFrame ? (
+              <img
+                src={currentEspFrame}
+                alt="ESP32-CAM feed"
+                style={{ width: CANVAS_W, height: CANVAS_H, objectFit: 'cover' }}
+              />
+            ) : null
           ) : (
             <video
               ref={videoRef}
@@ -558,6 +565,7 @@ export default function SessionStreamPage() {
           recordingTime={recordingTime}
           onStartRecording={handleStartRecording}
           onStopRecording={handleStopRecording}
+          recordingEnabled={cameraSource !== 'esp32'}
         />
       )}
     </div>
