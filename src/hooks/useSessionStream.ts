@@ -116,6 +116,47 @@ export function useSessionStream({ sessionCode, role }: UseSessionStreamOptions)
     });
   }, []);
 
+  // Broadcast a pre-captured image data URL (e.g. from ESP32-CAM).
+  // Applies the same center-crop + resize as broadcastFrame so annotation
+  // coordinates stay aligned with the 800×600 canvas.
+  const broadcastImage = useCallback((dataUrl: string) => {
+    if (!channelRef.current || !isSubscribedRef.current) return;
+
+    const img = new Image();
+    img.onload = () => {
+      if (!channelRef.current || !isSubscribedRef.current) return; // re-check after async decode
+      const offscreen = document.createElement('canvas');
+      offscreen.width = BROADCAST_WIDTH;
+      offscreen.height = BROADCAST_HEIGHT;
+      const ctx = offscreen.getContext('2d');
+      if (!ctx) return;
+
+      const targetAspect = BROADCAST_WIDTH / BROADCAST_HEIGHT;
+      const imgAspect = img.width / img.height;
+      let sx = 0, sy = 0, sw = img.width, sh = img.height;
+      if (imgAspect > targetAspect) {
+        sw = img.height * targetAspect;
+        sx = (img.width - sw) / 2;
+      } else if (imgAspect < targetAspect) {
+        sh = img.width / targetAspect;
+        sy = (img.height - sh) / 2;
+      }
+
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, BROADCAST_WIDTH, BROADCAST_HEIGHT);
+      const frame = offscreen.toDataURL('image/jpeg', JPEG_QUALITY);
+
+      channelRef.current?.send({
+        type: 'broadcast',
+        event: 'frame',
+        payload: { frame },
+      });
+    };
+    img.onerror = () => {
+      console.warn('[broadcastImage] Failed to load image URL — frame skipped');
+    };
+    img.src = dataUrl;
+  }, []);
+
   // Start interval-based frame broadcasting (presenter only)
   const startBroadcasting = useCallback(
     (videoElement: HTMLVideoElement) => {
@@ -163,5 +204,6 @@ export function useSessionStream({ sessionCode, role }: UseSessionStreamOptions)
     startBroadcasting,
     stopBroadcasting,
     broadcastAnnotations,
+    broadcastImage,
   };
 }
