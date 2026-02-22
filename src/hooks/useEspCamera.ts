@@ -91,7 +91,16 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const ct = res.headers.get('content-type') ?? '';
-      if (!ct.includes('image')) throw new Error('Not an image response');
+      if (!ct.includes('image')) {
+        // Try to read error details from the proxy response
+        try {
+          const errBody = await res.json();
+          throw new Error(errBody?.error ?? errBody?.body_preview ?? 'Not an image response');
+        } catch (e: any) {
+          if (e.message && e.message !== 'Not an image response') throw e;
+          throw new Error('Not an image response');
+        }
+      }
       setIsConnected(true);
       setIsConnecting(false);
       return true;
