@@ -75,8 +75,10 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
       const res = await fetch(`${base}/capture`, {
         mode: 'cors',
         signal: AbortSignal.timeout(TIMEOUT_MS),
-        // Bypasses ngrok free-tier browser interstitial page
-        headers: { 'ngrok-skip-browser-warning': '1' },
+        // Accept: image/jpeg bypasses the ngrok free-tier HTML interstitial
+        // without adding a custom header (custom headers trigger a CORS
+        // preflight that the ESP32's HTTP server cannot handle).
+        headers: { Accept: 'image/jpeg' },
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const ct = res.headers.get('content-type') ?? '';
@@ -113,8 +115,7 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
         const res = await fetch(`${buildBaseUrl(ip)}/capture`, {
           mode: 'cors',
           signal: AbortSignal.timeout(TIMEOUT_MS),
-          // Bypasses ngrok free-tier browser interstitial page
-          headers: { 'ngrok-skip-browser-warning': '1' },
+          headers: { Accept: 'image/jpeg' },
         });
         if (!res.ok) {
           setIsConnected(false);
