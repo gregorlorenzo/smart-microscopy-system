@@ -162,7 +162,7 @@ export default function SessionStreamPage() {
     }
   }, [isPresenter, currentFrame, exportImage]);
 
-  const handleSave = async (data: { name: string; description: string; tags: string[] }) => {
+  const handleSave = useCallback(async (data: { name: string; description: string; tags: string[] }) => {
     if (!capturedImage) return;
 
     let videoDataUrl: string | undefined;
@@ -189,7 +189,8 @@ export default function SessionStreamPage() {
     await storage.addSpecimen(specimen);
     setCapturedImage(null);
     setRecordedVideo(null);
-  };
+    setShowSaveDialog(false);
+  }, [capturedImage, recordedVideo]);
 
   const handleStartRecording = async () => {
     const stream = videoRef.current?.srcObject as MediaStream | null;
@@ -199,7 +200,11 @@ export default function SessionStreamPage() {
 
   const handleStopRecording = async () => {
     const blob = await stopRecording();
-    if (blob.size > 0) setRecordedVideo(blob);
+    if (blob.size > 0) {
+      setRecordedVideo(blob);
+    } else {
+      console.warn('[Capture] Recording stopped with no data');
+    }
   };
 
   if (!sessionInfo) return null;
@@ -329,6 +334,7 @@ export default function SessionStreamPage() {
             }`}
             onClick={() => setShowSaveDialog(true)}
             disabled={!capturedImage}
+            title="Save to Library"
           >
             <Save className="w-3.5 h-3.5" />
             Save to Library
