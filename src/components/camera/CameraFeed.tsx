@@ -18,6 +18,7 @@ export interface CameraFeedHandle {
 const CameraFeed = forwardRef<CameraFeedHandle, CameraFeedProps>(({ onImageCapture }, ref) => {
   const {
     videoRef,
+    videoElRef,
     stream,
     devices,
     selectedDeviceId,
@@ -30,7 +31,7 @@ const CameraFeed = forwardRef<CameraFeedHandle, CameraFeedProps>(({ onImageCaptu
   } = useCamera();
 
   useImperativeHandle(ref, () => ({
-    getVideoElement: () => videoRef.current,
+    getVideoElement: () => videoElRef.current,
     getStream: () => stream,
     isStreaming,
   }));
