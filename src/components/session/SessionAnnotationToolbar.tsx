@@ -14,7 +14,6 @@ interface SessionAnnotationToolbarProps {
   onClear: () => void;
   // New capture props
   captureReady: boolean;
-  canSave: boolean;
   onCapture: () => void;
   onSave: () => void;
   // New recording props
@@ -40,7 +39,7 @@ function formatTime(seconds: number): string {
 export default function SessionAnnotationToolbar({
   drawMode, brushColor, brushSize, canUndo,
   onModeChange, onColorChange, onSizeChange, onUndo, onClear,
-  captureReady, canSave, onCapture, onSave,
+  captureReady, onCapture, onSave,
   isRecording, recordingTime, onStartRecording, onStopRecording,
 }: SessionAnnotationToolbarProps) {
   const btn = (active: boolean, disabled = false) =>
@@ -132,12 +131,12 @@ export default function SessionAnnotationToolbar({
       </button>
       <button
         className={`h-9 px-3 rounded-lg flex items-center gap-1.5 text-xs font-medium transition-colors ${
-          canSave
+          captureReady
             ? 'bg-blue-600 text-white hover:bg-blue-500'
             : 'text-gray-600 cursor-not-allowed'
         }`}
         onClick={onSave}
-        disabled={!canSave}
+        disabled={!captureReady}
         title="Save to Library"
       >
         <Save className="w-3.5 h-3.5" />
