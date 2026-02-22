@@ -106,11 +106,10 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
-      // Revoke last URL on cleanup
-      if (prevUrlRef.current) {
-        setTimeout(() => URL.revokeObjectURL(prevUrlRef.current!), 1000);
-        prevUrlRef.current = null;
-      }
+      // Revoke last URL on cleanup — capture value before nulling the ref
+      const lastUrl = prevUrlRef.current;
+      prevUrlRef.current = null;
+      if (lastUrl) setTimeout(() => URL.revokeObjectURL(lastUrl), 1000);
       // Do NOT null currentFrame — keep last frame visible until next connection
     };
   }, [enabled, ip, isConnected]);
