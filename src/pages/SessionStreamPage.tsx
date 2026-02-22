@@ -1,12 +1,13 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Users, Library, Camera, Save } from 'lucide-react';
+import { ArrowLeft, Users, Library, Camera, Save, Wifi, Loader2 } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { Button } from '@/components/ui/button';
 import { loadSessionInfo } from '@/lib/sessionUtils';
 import { useSessionPresence } from '@/hooks/useSessionPresence';
 import { useSessionStream } from '@/hooks/useSessionStream';
 import { useCamera } from '@/hooks/useCamera';
+import { useEspCamera } from '@/hooks/useEspCamera';
 import { useAnnotations } from '@/hooks/useAnnotations';
 import { useVideoRecorder } from '@/hooks/useVideoRecorder';
 import SessionAnnotationToolbar from '@/components/session/SessionAnnotationToolbar';
@@ -37,6 +38,11 @@ export default function SessionStreamPage() {
 
   const isPresenter = sessionInfo?.role === 'presenter';
 
+  // ── Camera source setup ────────────────────────────────────────────────────
+  const [isLive, setIsLive] = useState(false);
+  const [cameraSource, setCameraSource] = useState<'webcam' | 'esp32'>('webcam');
+  const [espIp, setEspIp] = useState('');
+
   // ── Real-time hooks ────────────────────────────────────────────────────────────────────────────────────
   const { participants } = useSessionPresence({
     sessionCode: sessionInfo ? (code || '') : '',
@@ -52,6 +58,7 @@ export default function SessionStreamPage() {
     startBroadcasting,
     stopBroadcasting,
     broadcastAnnotations,
+    broadcastImage,
   } = useSessionStream({
     sessionCode: sessionInfo ? (code || '') : '',
     role: sessionInfo?.role || 'viewer',
@@ -60,21 +67,37 @@ export default function SessionStreamPage() {
   // ── Camera (presenter only) ─────────────────────────────────────────────────────────────
   const { videoRef, startCamera, stopCamera, isStreaming } = useCamera();
 
+  const {
+    currentFrame: currentEspFrame,
+    isConnected: espConnected,
+    isConnecting: espConnecting,
+    error: espError,
+    testConnection: testEspConnection,
+  } = useEspCamera({ ip: espIp, enabled: cameraSource === 'esp32' });
+
+  // Webcam: start camera for preview on setup screen (and keep alive when live)
   useEffect(() => {
-    if (!isPresenter || !sessionInfo) return;
+    if (!isPresenter || !sessionInfo || cameraSource !== 'webcam') return;
     startCamera();
     return () => {
       stopBroadcasting();
       stopCamera();
     };
-  }, [isPresenter, sessionInfo]);
+  }, [isPresenter, sessionInfo, cameraSource]);
 
-  // Start broadcasting once the camera stream is live
+  // Webcam: start broadcasting once live and camera stream is ready
   useEffect(() => {
-    if (isPresenter && isStreaming && videoRef.current) {
+    if (!isPresenter || !isLive || cameraSource !== 'webcam') return;
+    if (isStreaming && videoRef.current) {
       startBroadcasting(videoRef.current);
     }
-  }, [isPresenter, isStreaming]);
+  }, [isPresenter, isLive, cameraSource, isStreaming]);
+
+  // ESP32: broadcast each new frame when live
+  useEffect(() => {
+    if (!isPresenter || !isLive || cameraSource !== 'esp32' || !currentEspFrame) return;
+    broadcastImage(currentEspFrame);
+  }, [currentEspFrame, isPresenter, isLive, cameraSource, broadcastImage]);
 
   // ── Annotation canvas ────────────────────────────────────────────────────────────────────────────────────────────
   const {
@@ -160,8 +183,13 @@ export default function SessionStreamPage() {
     try {
       let baseFrame: string;
       if (isPresenter) {
-        if (!videoRef.current) return;
-        baseFrame = await captureVideoFrame(videoRef.current);
+        if (cameraSource === 'esp32') {
+          if (!currentEspFrame) return;
+          baseFrame = currentEspFrame;
+        } else {
+          if (!videoRef.current) return;
+          baseFrame = await captureVideoFrame(videoRef.current);
+        }
       } else {
         if (!currentFrame) return;
         baseFrame = currentFrame;
@@ -172,7 +200,7 @@ export default function SessionStreamPage() {
     } catch (err) {
       console.error('[Capture] Failed:', err);
     }
-  }, [isPresenter, currentFrame, exportImage]);
+  }, [isPresenter, cameraSource, currentEspFrame, currentFrame, exportImage]);
 
   const handleSave = useCallback(async (data: { name: string; description: string; tags: string[] }) => {
     if (!capturedImage) return;
@@ -221,7 +249,151 @@ export default function SessionStreamPage() {
 
   if (!sessionInfo) return null;
 
-  const isLive = isPresenter ? isStreaming : isPresenterStreaming;
+  // ── Setup screen (presenter only, before going live) ──────────────────────
+  if (isPresenter && !isLive) {
+    const canGoLive =
+      cameraSource === 'webcam' ? isStreaming :
+      cameraSource === 'esp32'  ? espConnected : false;
+
+    return (
+      <div className="flex flex-col h-screen bg-gray-950 text-white overflow-hidden">
+        {/* Top bar */}
+        <div className="flex items-center justify-between px-4 py-3 bg-gray-900/80 backdrop-blur border-b border-gray-800 shrink-0">
+          <div className="flex items-center gap-3">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-gray-300 hover:text-white hover:bg-gray-800 gap-1.5"
+              onClick={() => navigate(`/session/${code}`)}
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Back
+            </Button>
+            <span className="text-sm font-medium text-gray-200 hidden sm:block">
+              {sessionInfo.name}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 text-gray-400 text-sm">
+            <Users className="w-4 h-4" />
+            <span>Participants ({participants.length})</span>
+          </div>
+        </div>
+
+        {/* Setup content */}
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="w-full max-w-lg space-y-6">
+            <h2 className="text-xl font-semibold text-center">Camera Setup</h2>
+
+            {/* Source selector */}
+            <div className="bg-gray-900 rounded-xl p-4 space-y-3 border border-gray-800">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="radio"
+                  name="camera-source"
+                  checked={cameraSource === 'webcam'}
+                  onChange={() => setCameraSource('webcam')}
+                  className="accent-blue-500"
+                />
+                <span className="text-sm font-medium">Webcam / phone camera</span>
+              </label>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="radio"
+                  name="camera-source"
+                  checked={cameraSource === 'esp32'}
+                  onChange={() => setCameraSource('esp32')}
+                  className="accent-blue-500"
+                />
+                <span className="text-sm font-medium">ESP32-CAM</span>
+              </label>
+
+              {/* ESP32 IP input */}
+              {cameraSource === 'esp32' && (
+                <div className="ml-6 space-y-2 pt-1">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="192.168.1.105"
+                      value={espIp}
+                      onChange={(e) => setEspIp(e.target.value)}
+                      className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => testEspConnection(espIp)}
+                      disabled={!espIp.trim() || espConnecting}
+                      className="shrink-0 border-gray-700 text-gray-300 hover:text-white"
+                    >
+                      {espConnecting ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        'Test'
+                      )}
+                    </Button>
+                  </div>
+
+                  {/* Connection status */}
+                  {espConnected && (
+                    <p className="flex items-center gap-1.5 text-xs text-green-400">
+                      <Wifi className="w-3.5 h-3.5" />
+                      Connected
+                    </p>
+                  )}
+                  {espError && (
+                    <p className="text-xs text-red-400 whitespace-pre-wrap">{espError}</p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Preview */}
+            <div
+              className="relative bg-gray-900 rounded-xl overflow-hidden border border-gray-800 flex items-center justify-center"
+              style={{ width: '100%', aspectRatio: '4/3' }}
+            >
+              {cameraSource === 'webcam' && (
+                isStreaming ? (
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <p className="text-sm text-gray-500">Starting webcam…</p>
+                )
+              )}
+              {cameraSource === 'esp32' && (
+                espConnected && currentEspFrame ? (
+                  <img
+                    src={currentEspFrame}
+                    alt="ESP32-CAM preview"
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <p className="text-sm text-gray-500">
+                    {espConnecting ? 'Testing connection…' : 'Enter IP and click Test'}
+                  </p>
+                )
+              )}
+            </div>
+
+            {/* Go Live button */}
+            <Button
+              className="w-full"
+              size="lg"
+              onClick={() => setIsLive(true)}
+              disabled={!canGoLive}
+            >
+              Go Live
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-screen bg-gray-950 text-white overflow-hidden select-none">
@@ -257,7 +429,7 @@ export default function SessionStreamPage() {
           >
             <Library className="w-4 h-4" />
           </Button>
-          {isLive && (
+          {(isPresenter ? isLive : isPresenterStreaming) && (
             <div className="flex items-center gap-1.5 bg-red-600/20 border border-red-600/40 text-red-400 text-xs font-semibold px-2.5 py-1 rounded-full">
               <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
               Live
@@ -269,15 +441,23 @@ export default function SessionStreamPage() {
       {/* ── Main content ─────────────────────────────────────────────────────────────── */}
       <div className="flex-1 flex items-center justify-center relative overflow-hidden">
 
-        {/* Presenter: live camera feed — fixed to canvas size so annotation coordinates align */}
+        {/* Presenter: show webcam or ESP32-CAM feed */}
         {isPresenter && (
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            style={{ width: CANVAS_W, height: CANVAS_H, objectFit: 'cover' }}
-          />
+          cameraSource === 'esp32' && currentEspFrame ? (
+            <img
+              src={currentEspFrame}
+              alt="ESP32-CAM feed"
+              style={{ width: CANVAS_W, height: CANVAS_H, objectFit: 'cover' }}
+            />
+          ) : (
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              style={{ width: CANVAS_W, height: CANVAS_H, objectFit: 'cover' }}
+            />
+          )
         )}
 
         {/* Viewer: received JPEG frame — broadcast is already CANVAS_W × CANVAS_H */}
