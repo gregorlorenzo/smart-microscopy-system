@@ -65,7 +65,7 @@ export default function SessionStreamPage() {
   });
 
   // ── Camera (presenter only) ─────────────────────────────────────────────────────────────
-  const { videoRef, startCamera, stopCamera, isStreaming } = useCamera();
+  const { videoRef, videoElRef, startCamera, stopCamera, isStreaming } = useCamera();
 
   const {
     currentFrame: currentEspFrame,
@@ -93,8 +93,8 @@ export default function SessionStreamPage() {
   // Webcam: start broadcasting once live and camera stream is ready
   useEffect(() => {
     if (!isPresenter || !isLive || cameraSource !== 'webcam') return;
-    if (isStreaming && videoRef.current) {
-      startBroadcasting(videoRef.current);
+    if (isStreaming && videoElRef.current) {
+      startBroadcasting(videoElRef.current);
     }
   }, [isPresenter, isLive, cameraSource, isStreaming, startBroadcasting]);
 
@@ -192,8 +192,8 @@ export default function SessionStreamPage() {
           if (!currentEspFrame) return;
           baseFrame = currentEspFrame;
         } else {
-          if (!videoRef.current) return;
-          baseFrame = await captureVideoFrame(videoRef.current);
+          if (!videoElRef.current) return;
+          baseFrame = await captureVideoFrame(videoElRef.current);
         }
       } else {
         if (!currentFrame) return;
@@ -238,7 +238,7 @@ export default function SessionStreamPage() {
   }, [capturedImage, recordedVideo]);
 
   const handleStartRecording = useCallback(async () => {
-    const stream = videoRef.current?.srcObject as MediaStream | null;
+    const stream = videoElRef.current?.srcObject as MediaStream | null;
     if (!stream) return;
     await startRecording(stream);
   }, [startRecording]);
@@ -258,7 +258,7 @@ export default function SessionStreamPage() {
   if (isPresenter && !isLive) {
     const canGoLive =
       cameraSource === 'webcam' ? isStreaming :
-      cameraSource === 'esp32'  ? espConnected : false;
+        cameraSource === 'esp32' ? espConnected : false;
 
     return (
       <div className="flex flex-col h-screen bg-gray-950 text-white overflow-hidden">
@@ -358,17 +358,19 @@ export default function SessionStreamPage() {
               style={{ width: '100%', aspectRatio: '4/3' }}
             >
               {cameraSource === 'webcam' && (
-                isStreaming ? (
+                <>
                   <video
                     ref={videoRef}
                     autoPlay
                     playsInline
                     muted
                     className="w-full h-full object-cover"
+                    style={{ display: isStreaming ? 'block' : 'none' }}
                   />
-                ) : (
-                  <p className="text-sm text-gray-500">Starting webcam…</p>
-                )
+                  {!isStreaming && (
+                    <p className="text-sm text-gray-500">Starting webcam…</p>
+                  )}
+                </>
               )}
               {cameraSource === 'esp32' && (
                 espConnected && currentEspFrame ? (
@@ -509,11 +511,10 @@ export default function SessionStreamPage() {
       {!isPresenter && (
         <div className="flex items-center justify-center gap-2 px-4 py-3 bg-gray-900/95 backdrop-blur border-t border-gray-800">
           <button
-            className={`w-9 h-9 rounded-lg flex items-center justify-center relative transition-colors ${
-              isPresenterStreaming
-                ? 'text-gray-300 hover:bg-gray-700 hover:text-white'
-                : 'text-gray-600 cursor-not-allowed'
-            }`}
+            className={`w-9 h-9 rounded-lg flex items-center justify-center relative transition-colors ${isPresenterStreaming
+              ? 'text-gray-300 hover:bg-gray-700 hover:text-white'
+              : 'text-gray-600 cursor-not-allowed'
+              }`}
             onClick={handleCapture}
             disabled={!isPresenterStreaming}
             title="Capture current frame"
@@ -524,11 +525,10 @@ export default function SessionStreamPage() {
             )}
           </button>
           <button
-            className={`h-9 px-3 rounded-lg flex items-center gap-1.5 text-xs font-medium transition-colors ${
-              capturedImage
-                ? 'bg-blue-600 text-white hover:bg-blue-500'
-                : 'text-gray-600 cursor-not-allowed'
-            }`}
+            className={`h-9 px-3 rounded-lg flex items-center gap-1.5 text-xs font-medium transition-colors ${capturedImage
+              ? 'bg-blue-600 text-white hover:bg-blue-500'
+              : 'text-gray-600 cursor-not-allowed'
+              }`}
             onClick={() => setShowSaveDialog(true)}
             disabled={!capturedImage}
             title="Save to Library"
