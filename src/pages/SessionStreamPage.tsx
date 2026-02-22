@@ -1,14 +1,20 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Users, Library } from 'lucide-react';
+import { ArrowLeft, Users, Library, Camera, Save } from 'lucide-react';
+import { v4 as uuidv4 } from 'uuid';
 import { Button } from '@/components/ui/button';
 import { loadSessionInfo } from '@/lib/sessionUtils';
 import { useSessionPresence } from '@/hooks/useSessionPresence';
 import { useSessionStream } from '@/hooks/useSessionStream';
 import { useCamera } from '@/hooks/useCamera';
 import { useAnnotations } from '@/hooks/useAnnotations';
+import { useVideoRecorder } from '@/hooks/useVideoRecorder';
 import SessionAnnotationToolbar from '@/components/session/SessionAnnotationToolbar';
+import SaveSpecimenDialog from '@/components/capture/SaveSpecimenDialog';
+import { captureVideoFrame, mergeImages, blobToDataURL } from '@/lib/capture';
+import { storage } from '@/lib/storage';
 import { SessionInfo } from '@/types/session';
+import { Specimen } from '@/types/specimen';
 
 // Canvas size for the annotation overlay
 const CANVAS_W = 800;
@@ -32,16 +38,13 @@ export default function SessionStreamPage() {
   const isPresenter = sessionInfo?.role === 'presenter';
 
   // ── Real-time hooks ────────────────────────────────────────────────────────────────────────────────────
-
-  // Participant count for top bar
   const { participants } = useSessionPresence({
-    sessionCode: code || '',
+    sessionCode: sessionInfo ? (code || '') : '',
     participantName: sessionInfo?.participantName || '',
     role: sessionInfo?.role || 'viewer',
     sessionName: isPresenter ? sessionInfo?.name : undefined,
   });
 
-  // Frame + annotation broadcast/receive
   const {
     currentFrame,
     incomingAnnotations,
@@ -50,7 +53,7 @@ export default function SessionStreamPage() {
     stopBroadcasting,
     broadcastAnnotations,
   } = useSessionStream({
-    sessionCode: code || '',
+    sessionCode: sessionInfo ? (code || '') : '',
     role: sessionInfo?.role || 'viewer',
   });
 
@@ -86,6 +89,7 @@ export default function SessionStreamPage() {
     clearAll,
     exportJSON,
     loadJSON,
+    exportImage,
     fabricCanvas,
   } = useAnnotations(CANVAS_W, CANVAS_H);
 
@@ -123,6 +127,14 @@ export default function SessionStreamPage() {
     loadJSON(incomingAnnotations);
   }, [incomingAnnotations, isPresenter, fabricCanvas, loadJSON]);
 
+  // ── Capture state ───────────────────────────────────────────────────────────────────────
+  const [capturedImage, setCapturedImage] = useState<string | null>(null);
+  const [recordedVideo, setRecordedVideo] = useState<Blob | null>(null);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+
+  // ── Video recorder ──────────────────────────────────────────────────────────────────────
+  const { isRecording, recordingTime, startRecording, stopRecording } = useVideoRecorder();
+
   // ── Navigation handlers ────────────────────────────────────────────────────────────────────────────────────
   const handleBack = () => {
     stopBroadcasting();
@@ -130,6 +142,65 @@ export default function SessionStreamPage() {
   };
 
   const handleOpenLibrary = () => navigate(`/session/${code}/library`);
+
+  // ── Capture / save handlers ─────────────────────────────────────────────────────────────
+  const handleCapture = useCallback(async () => {
+    try {
+      let baseFrame: string;
+      if (isPresenter) {
+        if (!videoRef.current) return;
+        baseFrame = await captureVideoFrame(videoRef.current);
+      } else {
+        if (!currentFrame) return;
+        baseFrame = currentFrame;
+      }
+      const annotationImage = exportImage();
+      const merged = await mergeImages(baseFrame, annotationImage);
+      setCapturedImage(merged);
+    } catch (err) {
+      console.error('[Capture] Failed:', err);
+    }
+  }, [isPresenter, currentFrame, exportImage]);
+
+  const handleSave = async (data: { name: string; description: string; tags: string[] }) => {
+    if (!capturedImage) return;
+
+    let videoDataUrl: string | undefined;
+    if (recordedVideo) {
+      try {
+        videoDataUrl = await blobToDataURL(recordedVideo);
+      } catch {
+        // Continue without video if conversion fails
+      }
+    }
+
+    const specimen: Specimen = {
+      id: uuidv4(),
+      name: data.name,
+      description: data.description,
+      tags: data.tags,
+      capturedAt: new Date(),
+      imageUrl: capturedImage,
+      videoUrl: videoDataUrl,
+      annotations: [],
+      syncedToCloud: false,
+    };
+
+    await storage.addSpecimen(specimen);
+    setCapturedImage(null);
+    setRecordedVideo(null);
+  };
+
+  const handleStartRecording = async () => {
+    const stream = videoRef.current?.srcObject as MediaStream | null;
+    if (!stream) return;
+    await startRecording(stream);
+  };
+
+  const handleStopRecording = async () => {
+    const blob = await stopRecording();
+    if (blob.size > 0) setRecordedVideo(blob);
+  };
 
   if (!sessionInfo) return null;
 
@@ -232,6 +303,46 @@ export default function SessionStreamPage() {
         </div>
       </div>
 
+      {/* Viewer capture bar */}
+      {!isPresenter && (
+        <div className="flex items-center justify-center gap-2 px-4 py-3 bg-gray-900/95 backdrop-blur border-t border-gray-800">
+          <button
+            className={`w-9 h-9 rounded-lg flex items-center justify-center relative transition-colors ${
+              isPresenterStreaming
+                ? 'text-gray-300 hover:bg-gray-700 hover:text-white'
+                : 'text-gray-600 cursor-not-allowed'
+            }`}
+            onClick={handleCapture}
+            disabled={!isPresenterStreaming}
+            title="Capture current frame"
+          >
+            <Camera className="w-4 h-4" />
+            {capturedImage && (
+              <span className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border border-gray-900" />
+            )}
+          </button>
+          <button
+            className={`h-9 px-3 rounded-lg flex items-center gap-1.5 text-xs font-medium transition-colors ${
+              capturedImage
+                ? 'bg-blue-600 text-white hover:bg-blue-500'
+                : 'text-gray-600 cursor-not-allowed'
+            }`}
+            onClick={() => setShowSaveDialog(true)}
+            disabled={!capturedImage}
+          >
+            <Save className="w-3.5 h-3.5" />
+            Save to Library
+          </button>
+        </div>
+      )}
+
+      {/* Save specimen dialog — shared by both roles */}
+      <SaveSpecimenDialog
+        open={showSaveDialog}
+        onClose={() => setShowSaveDialog(false)}
+        onSave={handleSave}
+      />
+
       {/* ── Bottom toolbar — presenter only ──────────────────────────────────────────── */}
       {isPresenter && (
         <SessionAnnotationToolbar
@@ -244,6 +355,13 @@ export default function SessionStreamPage() {
           onSizeChange={(size) => updateBrush(undefined, size)}
           onUndo={undo}
           onClear={clearAll}
+          captureReady={!!capturedImage}
+          onCapture={handleCapture}
+          onSave={() => setShowSaveDialog(true)}
+          isRecording={isRecording}
+          recordingTime={recordingTime}
+          onStartRecording={handleStartRecording}
+          onStopRecording={handleStopRecording}
         />
       )}
     </div>
