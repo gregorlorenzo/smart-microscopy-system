@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Users, Library, Camera, Save } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
@@ -126,6 +126,18 @@ export default function SessionStreamPage() {
     if (!incomingAnnotations || isPresenter || !fabricCanvas) return;
     loadJSON(incomingAnnotations);
   }, [incomingAnnotations, isPresenter, fabricCanvas, loadJSON]);
+
+  // Presenter: re-broadcast current annotations whenever a new participant joins.
+  // Supabase broadcast is ephemeral — viewers who navigate away and return see no
+  // history, so the presenter must replay the current state on join.
+  const prevParticipantCountRef = useRef(0);
+  useEffect(() => {
+    if (!isPresenter || !fabricCanvas) return;
+    if (participants.length > prevParticipantCountRef.current) {
+      broadcastAnnotations(exportJSON());
+    }
+    prevParticipantCountRef.current = participants.length;
+  }, [participants, isPresenter, fabricCanvas, broadcastAnnotations, exportJSON]);
 
   // ── Capture state ───────────────────────────────────────────────────────────────────────
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
@@ -257,26 +269,24 @@ export default function SessionStreamPage() {
       {/* ── Main content ─────────────────────────────────────────────────────────────── */}
       <div className="flex-1 flex items-center justify-center relative overflow-hidden">
 
-        {/* Presenter: live camera feed */}
+        {/* Presenter: live camera feed — fixed to canvas size so annotation coordinates align */}
         {isPresenter && (
           <video
             ref={videoRef}
             autoPlay
             playsInline
             muted
-            className="max-h-full max-w-full object-contain"
-            style={{ maxHeight: `calc(100vh - 120px)` }}
+            style={{ width: CANVAS_W, height: CANVAS_H, objectFit: 'cover' }}
           />
         )}
 
-        {/* Viewer: received JPEG frame */}
+        {/* Viewer: received JPEG frame — broadcast is already CANVAS_W × CANVAS_H */}
         {!isPresenter && (
           isPresenterStreaming && currentFrame ? (
             <img
               src={currentFrame}
               alt="Live microscope feed"
-              className="max-h-full max-w-full object-contain"
-              style={{ maxHeight: `calc(100vh - 120px)` }}
+              style={{ width: CANVAS_W, height: CANVAS_H }}
             />
           ) : (
             <div className="text-center space-y-3 text-gray-600">

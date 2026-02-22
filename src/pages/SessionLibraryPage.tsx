@@ -23,7 +23,7 @@ export default function SessionLibraryPage() {
 
   const [selectedSpecimen, setSelectedSpecimen] = useState<Specimen | null>(null);
 
-  const handleBack = () => navigate(`/session/${code}`);
+  const handleBack = () => navigate(`/session/${code}/stream`);
   // "Add Specimen" sends user to the stream to capture from the live feed
   const handleAddSpecimen = () => navigate(`/session/${code}/stream`);
 
