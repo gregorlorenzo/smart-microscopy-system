@@ -16,24 +16,24 @@ const AnnotationCanvas = forwardRef<AnnotationCanvasHandle, AnnotationCanvasProp
   backgroundImage,
   onAnnotationsChange,
 }, ref) => {
-  const outerRef = useRef<HTMLDivElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
   // Use fixed size to avoid ResizeObserver feedback loop
   const canvasSize = { width: 800, height: 600 };
 
-  // Calculate scale factor for responsive display
   useEffect(() => {
-    const calculateScale = () => {
-      // Get available width (accounting for padding)
-      const maxWidth = window.innerWidth - 64; // 64px total padding
-      const scaleX = Math.min(1, maxWidth / canvasSize.width);
-      setScale(scaleX);
+    const el = wrapperRef.current;
+    if (!el) return;
+
+    const update = () => {
+      setScale(Math.min(1, el.clientWidth / canvasSize.width));
     };
 
-    calculateScale();
-    window.addEventListener('resize', calculateScale);
-    return () => window.removeEventListener('resize', calculateScale);
-  }, []);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [canvasSize.width]);
 
   const {
     containerRef,
@@ -99,32 +99,25 @@ const AnnotationCanvas = forwardRef<AnnotationCanvasHandle, AnnotationCanvasProp
         onClear={clearAll}
       />
 
-      {/* Canvas Container - Responsive with scale */}
-      <div className="flex justify-center w-full overflow-x-hidden">
+      {/* Canvas Container */}
+      <div
+        ref={wrapperRef}
+        className="w-full overflow-hidden"
+        style={{ aspectRatio: `${canvasSize.width} / ${canvasSize.height}` }}
+      >
         <div
           style={{
-            width: `${canvasSize.width * scale}px`,
-            height: `${canvasSize.height * scale}px`,
+            width: canvasSize.width,
+            height: canvasSize.height,
+            transform: `scale(${scale})`,
+            transformOrigin: 'top left',
           }}
         >
           <div
-            style={{
-              transform: `scale(${scale})`,
-              transformOrigin: 'top left',
-              width: `${canvasSize.width}px`,
-              height: `${canvasSize.height}px`,
-            }}
+            className="relative border-2 border-gray-300 rounded-lg bg-gray-100 overflow-hidden shadow-md"
+            style={{ width: canvasSize.width, height: canvasSize.height }}
           >
-            <div
-              ref={outerRef}
-              className="relative border-2 border-gray-300 rounded-lg bg-gray-100 overflow-hidden shadow-md"
-              style={{
-                width: `${canvasSize.width}px`,
-                height: `${canvasSize.height}px`,
-              }}
-            >
-              <div ref={containerRef} />
-            </div>
+            <div ref={containerRef} />
           </div>
         </div>
       </div>
