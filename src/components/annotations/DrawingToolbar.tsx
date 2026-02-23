@@ -64,7 +64,7 @@ export default function DrawingToolbar({
           <button
             key={color}
             onClick={() => onColorChange(color)}
-            className={`w-8 h-8 rounded border-2 ${
+            className={`w-10 h-10 sm:w-8 sm:h-8 rounded border-2 ${
               brushColor === color ? 'border-blue-500' : 'border-gray-300'
             }`}
             style={{ backgroundColor: color }}
