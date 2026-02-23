@@ -16,6 +16,7 @@ import { captureVideoFrame, mergeImages, blobToDataURL } from '@/lib/capture';
 import { storage } from '@/lib/storage';
 import { SessionInfo } from '@/types/session';
 import { Specimen } from '@/types/specimen';
+import ScaledCanvasWrapper from '@/components/ui/scaled-canvas-wrapper';
 
 // Canvas size for the annotation overlay
 const CANVAS_W = 800;
@@ -445,65 +446,71 @@ export default function SessionStreamPage() {
         </div>
       </div>
 
-      {/* ── Main content ─────────────────────────────────────────────────────────────── */}
-      <div className="flex-1 flex items-center justify-center relative overflow-hidden">
+      {/* ── Main content ─────────────────────────────────────────────────────── */}
+      <div className="flex-1 overflow-hidden flex items-center justify-center p-2 sm:p-0">
+        <div className="w-full" style={{ maxWidth: CANVAS_W }}>
+          <ScaledCanvasWrapper>
+            <div style={{ position: 'relative', width: CANVAS_W, height: CANVAS_H, background: '#111827' }}>
 
-        {/* Presenter: show webcam or ESP32-CAM feed */}
-        {isPresenter && (
-          cameraSource === 'esp32' ? (
-            currentEspFrame ? (
-              <img
-                src={currentEspFrame}
-                alt="ESP32-CAM feed"
-                style={{ width: CANVAS_W, height: CANVAS_H, objectFit: 'cover' }}
-              />
-            ) : null
-          ) : (
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              style={{ width: CANVAS_W, height: CANVAS_H, objectFit: 'cover' }}
-            />
-          )
-        )}
+              {/* Presenter: webcam feed */}
+              {isPresenter && cameraSource !== 'esp32' && (
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  style={{ width: CANVAS_W, height: CANVAS_H, objectFit: 'cover', display: 'block' }}
+                />
+              )}
 
-        {/* Viewer: received JPEG frame — broadcast is already CANVAS_W × CANVAS_H */}
-        {!isPresenter && (
-          isPresenterStreaming && currentFrame ? (
-            <img
-              src={currentFrame}
-              alt="Live microscope feed"
-              style={{ width: CANVAS_W, height: CANVAS_H }}
-            />
-          ) : (
-            <div className="text-center space-y-3 text-gray-600">
-              <div className="w-16 h-16 mx-auto bg-gray-800 rounded-full flex items-center justify-center">
-                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                    d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
+              {/* Presenter: ESP32-CAM feed */}
+              {isPresenter && cameraSource === 'esp32' && currentEspFrame && (
+                <img
+                  src={currentEspFrame}
+                  alt="ESP32-CAM feed"
+                  style={{ width: CANVAS_W, height: CANVAS_H, objectFit: 'cover' }}
+                />
+              )}
+
+              {/* Viewer: received frame */}
+              {!isPresenter && isPresenterStreaming && currentFrame && (
+                <img
+                  src={currentFrame}
+                  alt="Live microscope feed"
+                  style={{ width: CANVAS_W, height: CANVAS_H }}
+                />
+              )}
+
+              {/* Viewer: waiting placeholder */}
+              {!isPresenter && (!isPresenterStreaming || !currentFrame) && (
+                <div
+                  className="absolute inset-0 flex items-center justify-center text-center text-gray-600"
+                >
+                  <div className="space-y-3">
+                    <div className="w-16 h-16 mx-auto bg-gray-800 rounded-full flex items-center justify-center">
+                      <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                          d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                    </div>
+                    <p className="text-sm">Waiting for presenter to start the stream…</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Annotation canvas overlay */}
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  pointerEvents: isPresenter ? 'auto' : 'none',
+                }}
+              >
+                <div ref={containerRef} />
               </div>
-              <p className="text-sm">Waiting for presenter to start the stream…</p>
-            </div>
-          )
-        )}
 
-        {/* Annotation canvas overlay — fixed 800×600, centered, transparent */}
-        {/* Presenter: interactive. Viewer: pointer-events disabled. */}
-        <div
-          className="absolute overflow-hidden"
-          style={{
-            width: CANVAS_W,
-            height: CANVAS_H,
-            left: '50%',
-            top: '50%',
-            transform: 'translate(-50%, -50%)',
-            pointerEvents: isPresenter ? 'auto' : 'none',
-          }}
-        >
-          <div ref={containerRef} />
+            </div>
+          </ScaledCanvasWrapper>
         </div>
       </div>
 
