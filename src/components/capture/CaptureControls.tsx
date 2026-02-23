@@ -39,7 +39,7 @@ export default function CaptureControls({
   };
 
   return (
-    <div className="flex gap-2">
+    <div className="flex flex-wrap gap-2">
       <Button
         onClick={handleCapture}
         disabled={!canCapture || isCapturing}
