@@ -48,7 +48,7 @@ export default function SessionLibraryPage() {
       </div>
 
       {/* Content */}
-      <div className="max-w-5xl mx-auto p-6 space-y-4">
+      <div className="max-w-5xl mx-auto p-4 sm:p-6 space-y-4">
         {/* Search + filter row */}
         <div className="flex gap-3">
           <Input
