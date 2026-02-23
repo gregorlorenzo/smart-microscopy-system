@@ -99,12 +99,13 @@ export default function SpecimenGrid({ specimens, onDelete, onSelect }: Specimen
       {/* Pagination */}
       {totalPages > 1 && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-gray-600">
-              Showing {startIndex + 1}-{Math.min(endIndex, specimens.length)} of {specimens.length}
+          <div className="flex items-center justify-between gap-2">
+            {/* Count label: desktop only */}
+            <p className="text-sm text-gray-600 hidden sm:block">
+              Showing {startIndex + 1}–{Math.min(endIndex, specimens.length)} of {specimens.length}
             </p>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-start">
               <Button
                 variant="outline"
                 size="sm"
@@ -112,12 +113,12 @@ export default function SpecimenGrid({ specimens, onDelete, onSelect }: Specimen
                 disabled={currentPage === 1}
               >
                 <ChevronLeft className="w-4 h-4" />
-                Previous
+                <span className="hidden sm:inline ml-1">Previous</span>
               </Button>
 
-              <div className="flex items-center gap-1">
+              {/* Page numbers: desktop only */}
+              <div className="hidden sm:flex items-center gap-1">
                 {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => {
-                  // Show first page, last page, current page, and pages around current
                   const showPage =
                     page === 1 ||
                     page === totalPages ||
@@ -130,7 +131,6 @@ export default function SpecimenGrid({ specimens, onDelete, onSelect }: Specimen
                   if (showEllipsis) {
                     return <span key={page} className="px-2 text-gray-400">...</span>;
                   }
-
                   if (!showPage) return null;
 
                   return (
@@ -147,13 +147,18 @@ export default function SpecimenGrid({ specimens, onDelete, onSelect }: Specimen
                 })}
               </div>
 
+              {/* Page indicator: mobile only */}
+              <span className="sm:hidden text-sm font-medium text-gray-600">
+                {currentPage} / {totalPages}
+              </span>
+
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => goToPage(currentPage + 1)}
                 disabled={currentPage === totalPages}
               >
-                Next
+                <span className="hidden sm:inline mr-1">Next</span>
                 <ChevronRight className="w-4 h-4" />
               </Button>
             </div>
