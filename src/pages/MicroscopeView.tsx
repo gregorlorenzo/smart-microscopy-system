@@ -273,8 +273,8 @@ export default function MicroscopeView() {
             />
           </div>
         ) : (
-          <div className="bg-white rounded-xl shadow-sm border-2 border-dashed border-gray-300 p-6">
-            <div className="flex items-center justify-center h-full min-h-[600px]">
+          <div className="bg-white rounded-xl shadow-sm border-2 border-dashed border-gray-300 p-6 aspect-[4/3]">
+            <div className="flex items-center justify-center h-full">
               <div className="text-center space-y-3">
                 <div className="w-16 h-16 mx-auto bg-blue-50 rounded-full flex items-center justify-center">
                   <svg className="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
