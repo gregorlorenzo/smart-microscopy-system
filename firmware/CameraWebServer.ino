@@ -49,7 +49,7 @@ void setup() {
 
   if (config.pixel_format == PIXFORMAT_JPEG) {
     if (psramFound()) {
-      config.jpeg_quality = 20;             // changed: was 10 — smaller frames, faster delivery
+      config.jpeg_quality = 25;             // changed: was 10 — smaller frames, less WiFi load
       config.fb_count = 2;
       config.grab_mode = CAMERA_GRAB_LATEST;
     } else {
