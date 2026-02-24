@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-const TIMEOUT_MS = 8000;
+const TEST_TIMEOUT_MS = 15000;  // first capture after boot can be slow
+const CAPTURE_TIMEOUT_MS = 8000;
 
 /**
  * Normalise whatever the user typed into a full base URL:
@@ -96,7 +97,7 @@ export function useEspCamera({ ip }: UseEspCameraOptions): UseEspCameraResult {
     try {
       const base = buildBaseUrl(testIp);
       const url = captureUrl(base);
-      const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+      const res = await fetch(url, { signal: AbortSignal.timeout(TEST_TIMEOUT_MS) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const ct = res.headers.get('content-type') ?? '';
       if (!ct.includes('image')) {
@@ -122,7 +123,7 @@ export function useEspCamera({ ip }: UseEspCameraOptions): UseEspCameraResult {
         !isTimeout && (err?.message === 'Failed to fetch' || err?.name === 'TypeError');
       setError(
         isTimeout
-          ? 'ESP32 timed out — it may be busy capturing a large frame. Try again.'
+          ? 'ESP32 timed out. Check the IP is correct (use Serial Monitor after reset), then try again.'
           : isNetworkBlock
           ? 'Cannot reach ESP32. Check IP/URL and confirm same WiFi, or use an ngrok tunnel.'
           : `Cannot reach ESP32: ${err?.message ?? 'Unknown error'}`,
@@ -138,7 +139,7 @@ export function useEspCamera({ ip }: UseEspCameraOptions): UseEspCameraResult {
     if (!baseUrlRef.current) return null;
     try {
       const url = captureUrl(baseUrlRef.current);
-      const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+      const res = await fetch(url, { signal: AbortSignal.timeout(CAPTURE_TIMEOUT_MS) });
       if (!res.ok) return null;
       const blob = await res.blob();
       if (blob.size === 0 || !blob.type.includes('image')) return null;
