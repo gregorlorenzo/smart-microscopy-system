@@ -375,7 +375,7 @@ export default function SessionStreamPage() {
                 </>
               )}
               {cameraSource === 'esp32' && (
-                espConnected && currentEspFrame ? (
+                currentEspFrame ? (
                   <img
                     src={currentEspFrame}
                     alt="ESP32-CAM preview"

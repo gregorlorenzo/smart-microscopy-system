@@ -132,6 +132,12 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
   useEffect(() => {
     if (!enabled || !ip || !isConnected) return;
 
+    // Require this many consecutive failures before disconnecting.
+    // This prevents React Strict Mode's double-invoked effect (run→cleanup→run)
+    // from disconnecting on the single stale poll that fires from the first run.
+    let consecutiveFailures = 0;
+    const MAX_FAILURES = 2;
+
     const poll = async () => {
       // Skip tick if a mid-interval disconnect has already occurred
       if (!isConnectedRef.current) return;
@@ -142,16 +148,23 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
           signal: AbortSignal.timeout(TIMEOUT_MS),
         });
         if (!res.ok) {
-          setIsConnected(false);
-          setError('ESP32 stream interrupted. Reconnect or re-test.');
+          consecutiveFailures++;
+          if (consecutiveFailures >= MAX_FAILURES) {
+            setIsConnected(false);
+            setError('ESP32 stream interrupted. Reconnect or re-test.');
+          }
           return;
         }
         const blob = await res.blob();
         if (blob.size === 0 || !blob.type.includes('image')) {
-          setIsConnected(false);
-          setError('ESP32 stream interrupted. Reconnect or re-test.');
+          consecutiveFailures++;
+          if (consecutiveFailures >= MAX_FAILURES) {
+            setIsConnected(false);
+            setError('ESP32 stream interrupted. Reconnect or re-test.');
+          }
           return;
         }
+        consecutiveFailures = 0;
         const newUrl = URL.createObjectURL(blob);
 
         // Schedule revocation of previous URL after 5 s — long enough that
@@ -163,8 +176,11 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
         prevUrlRef.current = newUrl;
         setCurrentFrame(newUrl);
       } catch {
-        setIsConnected(false);
-        setError('ESP32 stream interrupted. Reconnect or re-test.');
+        consecutiveFailures++;
+        if (consecutiveFailures >= MAX_FAILURES) {
+          setIsConnected(false);
+          setError('ESP32 stream interrupted. Reconnect or re-test.');
+        }
       }
     };
 
