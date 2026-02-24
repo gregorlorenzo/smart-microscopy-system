@@ -69,12 +69,14 @@ export default function SessionStreamPage() {
   const { videoRef, videoElRef, startCamera, stopCamera, isStreaming } = useCamera();
 
   const {
-    currentFrame: currentEspFrame,
+    streamUrl: espStreamUrl,
+    captureStill: captureEspStill,
+    onStreamError: onEspStreamError,
     isConnected: espConnected,
     isConnecting: espConnecting,
     error: espError,
     testConnection: testEspConnection,
-  } = useEspCamera({ ip: espIp, enabled: cameraSource === 'esp32' });
+  } = useEspCamera({ ip: espIp });
 
   // Mirror isLive into a ref so cleanup callbacks can read the current value
   // without being listed in effect dependency arrays.
@@ -99,11 +101,18 @@ export default function SessionStreamPage() {
     }
   }, [isPresenter, isLive, cameraSource, isStreaming, startBroadcasting]);
 
-  // ESP32: broadcast each new frame when live
+  // ESP32: broadcast a still capture to viewers every second while live.
+  // The presenter watches the MJPEG stream directly; viewers receive periodic
+  // JPEG stills fetched from /capture (same mechanism as before, just decoupled
+  // from the live view so the stream itself is never interrupted).
   useEffect(() => {
-    if (!isPresenter || !isLive || cameraSource !== 'esp32' || !currentEspFrame) return;
-    broadcastImage(currentEspFrame);
-  }, [currentEspFrame, isPresenter, isLive, cameraSource, broadcastImage]);
+    if (!isPresenter || !isLive || cameraSource !== 'esp32') return;
+    const id = setInterval(async () => {
+      const still = await captureEspStill();
+      if (still) broadcastImage(still);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [isPresenter, isLive, cameraSource, captureEspStill, broadcastImage]);
 
   // ── Annotation canvas ────────────────────────────────────────────────────────────────────────────────────────────
   const {
@@ -190,8 +199,10 @@ export default function SessionStreamPage() {
       let baseFrame: string;
       if (isPresenter) {
         if (cameraSource === 'esp32') {
-          if (!currentEspFrame) return;
-          baseFrame = currentEspFrame;
+          // Fetch a full-quality still from /capture for saving
+          const still = await captureEspStill();
+          if (!still) return;
+          baseFrame = still;
         } else {
           if (!videoElRef.current) return;
           baseFrame = await captureVideoFrame(videoElRef.current);
@@ -206,7 +217,7 @@ export default function SessionStreamPage() {
     } catch (err) {
       console.error('[Capture] Failed:', err);
     }
-  }, [isPresenter, cameraSource, currentEspFrame, currentFrame, exportImage]);
+  }, [isPresenter, cameraSource, captureEspStill, currentFrame, exportImage]);
 
   const handleSave = useCallback(async (data: { name: string; description: string; tags: string[] }) => {
     if (!capturedImage) return;
@@ -375,11 +386,12 @@ export default function SessionStreamPage() {
                 </>
               )}
               {cameraSource === 'esp32' && (
-                currentEspFrame ? (
+                espStreamUrl ? (
                   <img
-                    src={currentEspFrame}
+                    src={espStreamUrl}
                     alt="ESP32-CAM preview"
                     className="w-full h-full object-cover"
+                    onError={onEspStreamError}
                   />
                 ) : (
                   <p className="text-sm text-gray-500">
@@ -465,11 +477,12 @@ export default function SessionStreamPage() {
                 />
               )}
 
-              {/* Presenter: ESP32-CAM feed */}
-              {isPresenter && cameraSource === 'esp32' && currentEspFrame && (
+              {/* Presenter: ESP32-CAM MJPEG feed */}
+              {isPresenter && cameraSource === 'esp32' && espStreamUrl && (
                 <img
-                  src={currentEspFrame}
+                  src={espStreamUrl}
                   alt="ESP32-CAM feed"
+                  onError={onEspStreamError}
                   style={{ width: CANVAS_W, height: CANVAS_H, objectFit: 'cover' }}
                 />
               )}

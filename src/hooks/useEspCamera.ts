@@ -1,10 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-const POLL_INTERVAL_MS = 500;
-/**
- * Raised from 3 s → 8 s so high-resolution JPEG captures
- * (OV3660 QXGA etc.) don't time-out before the ESP32 responds.
- */
 const TIMEOUT_MS = 8000;
 
 /**
@@ -18,7 +13,6 @@ function buildBaseUrl(input: string): string {
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
     return trimmed;
   }
-  // Mirror the host page's protocol so bare hostnames work without typing a scheme
   const defaultScheme =
     typeof window !== 'undefined' && window.location.protocol === 'https:'
       ? 'https'
@@ -28,11 +22,7 @@ function buildBaseUrl(input: string): string {
 
 /**
  * Build the fetch URL for /capture.
- *
- * On Vercel (HTTPS) we route through `/api/esp32-proxy` which fetches
- * the ESP32 server-side — this bypasses both CORS and ngrok's free-tier
- * HTML interstitial page.
- *
+ * On Vercel (HTTPS) we route through `/api/esp32-proxy`.
  * On localhost (HTTP) we hit the ESP32 directly.
  */
 function captureUrl(baseUrl: string): string {
@@ -44,39 +34,60 @@ function captureUrl(baseUrl: string): string {
   return `${baseUrl}/capture`;
 }
 
+/**
+ * Derive the MJPEG stream URL from the base URL.
+ * CameraWebServer always streams on port 81 at /stream.
+ * We strip any explicit port from the input and append :81/stream.
+ */
+function buildStreamUrl(baseUrl: string): string {
+  try {
+    const u = new URL(baseUrl);
+    return `${u.protocol}//${u.hostname}:81/stream`;
+  } catch {
+    return `http://${baseUrl}:81/stream`;
+  }
+}
+
 interface UseEspCameraOptions {
   /**
    * IP address OR full URL entered by the presenter.
    * Examples:
-   *   "192.168.1.28"                  (local network, use from local http:// page)
-   *   "https://abc.ngrok-free.app"    (ngrok tunnel, works from Vercel HTTPS)
+   *   "192.168.1.28"                  (local network)
+   *   "https://abc.ngrok-free.app"    (ngrok tunnel)
    */
   ip: string;
-  /** Set to true when "ESP32-CAM" is selected as camera source */
-  enabled: boolean;
 }
 
 export interface UseEspCameraResult {
-  /** Blob URL of the latest captured frame, or null before first frame */
-  currentFrame: string | null;
+  /**
+   * MJPEG stream URL — set after testConnection succeeds, null before.
+   * Use directly as <img src={streamUrl} />.
+   */
+  streamUrl: string | null;
+  /**
+   * Fetch a single JPEG still from /capture.
+   * Returns a data URL, or null on failure.
+   * Use for saving specimens and broadcasting frames to viewers.
+   */
+  captureStill: () => Promise<string | null>;
+  /** Call from <img onError={onStreamError}> so the hook knows when the stream drops. */
+  onStreamError: () => void;
   isConnected: boolean;
   isConnecting: boolean;
   /** Human-readable error message, or null when healthy */
   error: string | null;
-  /** Test reachability + CORS for a given IP. Sets isConnected on success. */
+  /** Test reachability for a given IP. Sets isConnected + streamUrl on success. */
   testConnection: (ip: string) => Promise<boolean>;
 }
 
-export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCameraResult {
-  const [currentFrame, setCurrentFrame] = useState<string | null>(null);
+export function useEspCamera({ ip }: UseEspCameraOptions): UseEspCameraResult {
+  const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Keep previous Blob URL alive for 5 s so any in-flight canvas drawImage finishes
-  const prevUrlRef = useRef<string | null>(null);
-  // Ref mirror of isConnected so poll() can check it without being in effect deps
-  const isConnectedRef = useRef(false);
+  // Stable ref to the current base URL so captureStill doesn't need ip in its deps
+  const baseUrlRef = useRef<string>('');
 
   // ── Connection test (called by the "Test" button) ──────────────────────────
   const testConnection = useCallback(async (testIp: string): Promise<boolean> => {
@@ -85,13 +96,10 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
     try {
       const base = buildBaseUrl(testIp);
       const url = captureUrl(base);
-      const res = await fetch(url, {
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-      });
+      const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const ct = res.headers.get('content-type') ?? '';
       if (!ct.includes('image')) {
-        // Try to read error details from the proxy response
         try {
           const errBody = await res.json();
           throw new Error(errBody?.error ?? errBody?.body_preview ?? 'Not an image response');
@@ -100,13 +108,11 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
           throw new Error('Not an image response');
         }
       }
-      // Consume the response body to confirm actual image data is present,
-      // and use it as the initial frame so polling doesn't need an extra request.
       const blob = await res.blob();
       if (blob.size === 0) throw new Error('ESP32 returned an empty frame');
-      const blobUrl = URL.createObjectURL(blob);
-      prevUrlRef.current = blobUrl;
-      setCurrentFrame(blobUrl);
+
+      baseUrlRef.current = base;
+      setStreamUrl(buildStreamUrl(base));
       setIsConnected(true);
       setIsConnecting(false);
       return true;
@@ -127,124 +133,40 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
     }
   }, []);
 
-  // ── Frame polling ──────────────────────────────────────────────────────────
-  // Keep ref in sync so poll() sees the latest value without re-running the effect
-  useEffect(() => { isConnectedRef.current = isConnected; }, [isConnected]);
+  // ── Still capture (for saving specimens + broadcasting to viewers) ──────────
+  const captureStill = useCallback(async (): Promise<string | null> => {
+    if (!baseUrlRef.current) return null;
+    try {
+      const url = captureUrl(baseUrlRef.current);
+      const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      if (blob.size === 0 || !blob.type.includes('image')) return null;
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      return null;
+    }
+  }, []);
 
-  useEffect(() => {
-    if (!enabled || !ip || !isConnected) return;
+  // ── Stream error handler (wired to <img onError>) ───────────────────────────
+  const onStreamError = useCallback(() => {
+    setIsConnected(false);
+    setStreamUrl(null);
+    setError('ESP32 stream disconnected. Re-test to reconnect.');
+  }, []);
 
-    // Sequential polling: next fetch only starts after the current one finishes,
-    // so a slow ESP32 (>500 ms per frame) can never pile up concurrent requests.
-    //
-    // `active` is flipped to false on cleanup so any in-flight fetch that
-    // resolves after cleanup is silently discarded instead of counting as a
-    // failure or updating state.
-    let active = true;
-    let nextPollTimeout: ReturnType<typeof setTimeout> | null = null;
-    let currentController: AbortController | null = null;
-
-    // Require this many consecutive failures before disconnecting.
-    // 3 gives enough headroom for one or two slow frames caused by motion
-    // (large JPEGs) without counting timeout aborts from React Strict Mode's
-    // double-invoke as real failures.
-    let consecutiveFailures = 0;
-    const MAX_FAILURES = 3;
-
-    const base = buildBaseUrl(ip);
-    const url = captureUrl(base);
-
-    const disconnect = (msg: string) => {
-      setIsConnected(false);
-      setError(msg);
-    };
-
-    const poll = async () => {
-      if (!active || !isConnectedRef.current) return;
-
-      currentController = new AbortController();
-      const abortTimer = setTimeout(() => currentController?.abort(), TIMEOUT_MS);
-      try {
-        const res = await fetch(url, { signal: currentController.signal });
-        clearTimeout(abortTimer);
-        currentController = null;
-        if (!active) return; // cleanup fired while fetch was in-flight
-
-        if (!res.ok) {
-          consecutiveFailures++;
-          if (consecutiveFailures >= MAX_FAILURES) {
-            disconnect('ESP32 stream interrupted. Reconnect or re-test.');
-            return; // stop scheduling — isConnected will flip false
-          }
-        } else {
-          const blob = await res.blob();
-          if (!active) return;
-
-          if (blob.size === 0 || !blob.type.includes('image')) {
-            consecutiveFailures++;
-            if (consecutiveFailures >= MAX_FAILURES) {
-              disconnect('ESP32 stream interrupted. Reconnect or re-test.');
-              return;
-            }
-          } else {
-            consecutiveFailures = 0;
-            const newUrl = URL.createObjectURL(blob);
-
-            // Schedule revocation of previous URL after 5 s — long enough that
-            // React Strict Mode's effect cleanup+rerun cycle never races with a
-            // slow ESP32 response and revokes a URL still in use.
-            const old = prevUrlRef.current;
-            if (old) setTimeout(() => URL.revokeObjectURL(old), 5000);
-
-            prevUrlRef.current = newUrl;
-            setCurrentFrame(newUrl);
-          }
-        }
-      } catch (err: any) {
-        clearTimeout(abortTimer);
-        currentController = null;
-        // `active` is false only when cleanup intentionally aborted us — stop then.
-        // Any other AbortError (our own timeout timer fired) or network error is a
-        // real failure: count it and keep retrying so motion-heavy scenes that
-        // temporarily push frames past TIMEOUT_MS don't kill the stream.
-        if (!active) return;
-        consecutiveFailures++;
-        if (consecutiveFailures >= MAX_FAILURES) {
-          disconnect('ESP32 stream interrupted. Reconnect or re-test.');
-          return;
-        }
-      }
-
-      // Schedule next poll only after this one is done (sequential, not concurrent)
-      if (active && isConnectedRef.current) {
-        nextPollTimeout = setTimeout(poll, POLL_INTERVAL_MS);
-      }
-    };
-
-    poll(); // immediate first frame
-
-    return () => {
-      active = false;
-      currentController?.abort();
-      if (nextPollTimeout !== null) {
-        clearTimeout(nextPollTimeout);
-        nextPollTimeout = null;
-      }
-      // Revoke last URL on cleanup — use the same 5 s delay so a
-      // Strict Mode cleanup+rerun cycle doesn't revoke a URL still in use.
-      const lastUrl = prevUrlRef.current;
-      prevUrlRef.current = null;
-      if (lastUrl) setTimeout(() => URL.revokeObjectURL(lastUrl), 5000);
-      // Do NOT null currentFrame — keep last frame visible until next connection
-    };
-  }, [enabled, ip, isConnected]);
-
-  // Reset state when IP changes
+  // ── Reset state when IP changes ─────────────────────────────────────────────
   useEffect(() => {
     setIsConnected(false);
-    setCurrentFrame(null);
+    setStreamUrl(null);
     setError(null);
+    baseUrlRef.current = '';
   }, [ip]);
 
-  return { currentFrame, isConnected, isConnecting, error, testConnection };
+  return { streamUrl, captureStill, onStreamError, isConnected, isConnecting, error, testConnection };
 }
