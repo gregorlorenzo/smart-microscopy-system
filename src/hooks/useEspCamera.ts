@@ -73,8 +73,7 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Keep previous Blob URL alive for 1 s so any in-flight canvas drawImage finishes
+  // Keep previous Blob URL alive for 5 s so any in-flight canvas drawImage finishes
   const prevUrlRef = useRef<string | null>(null);
   // Ref mirror of isConnected so poll() can check it without being in effect deps
   const isConnectedRef = useRef(false);
@@ -132,65 +131,92 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
   useEffect(() => {
     if (!enabled || !ip || !isConnected) return;
 
+    // Sequential polling: next fetch only starts after the current one finishes,
+    // so a slow ESP32 (>500 ms per frame) can never pile up concurrent requests.
+    //
+    // `active` is flipped to false on cleanup so any in-flight fetch that
+    // resolves after cleanup is silently discarded instead of counting as a
+    // failure or updating state.
+    let active = true;
+    let nextPollTimeout: ReturnType<typeof setTimeout> | null = null;
+    let currentController: AbortController | null = null;
+
     // Require this many consecutive failures before disconnecting.
-    // This prevents React Strict Mode's double-invoked effect (run→cleanup→run)
-    // from disconnecting on the single stale poll that fires from the first run.
+    // Guards against React Strict Mode's double-invoke (run→cleanup→run)
+    // where the single stale in-flight fetch from the first run errors out.
     let consecutiveFailures = 0;
     const MAX_FAILURES = 2;
 
+    const base = buildBaseUrl(ip);
+    const url = captureUrl(base);
+
     const poll = async () => {
-      // Skip tick if a mid-interval disconnect has already occurred
-      if (!isConnectedRef.current) return;
+      if (!active || !isConnectedRef.current) return;
+
+      currentController = new AbortController();
+      const abortTimer = setTimeout(() => currentController?.abort(), TIMEOUT_MS);
       try {
-        const base = buildBaseUrl(ip);
-        const url = captureUrl(base);
-        const res = await fetch(url, {
-          signal: AbortSignal.timeout(TIMEOUT_MS),
-        });
+        const res = await fetch(url, { signal: currentController.signal });
+        clearTimeout(abortTimer);
+        currentController = null;
+        if (!active) return; // cleanup fired while fetch was in-flight
+
         if (!res.ok) {
           consecutiveFailures++;
           if (consecutiveFailures >= MAX_FAILURES) {
             setIsConnected(false);
             setError('ESP32 stream interrupted. Reconnect or re-test.');
           }
-          return;
-        }
-        const blob = await res.blob();
-        if (blob.size === 0 || !blob.type.includes('image')) {
-          consecutiveFailures++;
-          if (consecutiveFailures >= MAX_FAILURES) {
-            setIsConnected(false);
-            setError('ESP32 stream interrupted. Reconnect or re-test.');
+        } else {
+          const blob = await res.blob();
+          if (!active) return;
+
+          if (blob.size === 0 || !blob.type.includes('image')) {
+            consecutiveFailures++;
+            if (consecutiveFailures >= MAX_FAILURES) {
+              setIsConnected(false);
+              setError('ESP32 stream interrupted. Reconnect or re-test.');
+            }
+          } else {
+            consecutiveFailures = 0;
+            const newUrl = URL.createObjectURL(blob);
+
+            // Schedule revocation of previous URL after 5 s — long enough that
+            // React Strict Mode's effect cleanup+rerun cycle never races with a
+            // slow ESP32 response and revokes a URL still in use.
+            const old = prevUrlRef.current;
+            if (old) setTimeout(() => URL.revokeObjectURL(old), 5000);
+
+            prevUrlRef.current = newUrl;
+            setCurrentFrame(newUrl);
           }
-          return;
         }
-        consecutiveFailures = 0;
-        const newUrl = URL.createObjectURL(blob);
-
-        // Schedule revocation of previous URL after 5 s — long enough that
-        // React Strict Mode's effect cleanup+rerun cycle never races with a
-        // slow ESP32 response and revokes a URL still in use.
-        const old = prevUrlRef.current;
-        if (old) setTimeout(() => URL.revokeObjectURL(old), 5000);
-
-        prevUrlRef.current = newUrl;
-        setCurrentFrame(newUrl);
-      } catch {
+      } catch (err: any) {
+        clearTimeout(abortTimer);
+        currentController = null;
+        // AbortError means cleanup intentionally cancelled us — not a real failure
+        if (!active || err?.name === 'AbortError') return;
         consecutiveFailures++;
         if (consecutiveFailures >= MAX_FAILURES) {
           setIsConnected(false);
           setError('ESP32 stream interrupted. Reconnect or re-test.');
         }
       }
+
+      // Schedule next poll only after this one is done (sequential, not concurrent)
+      if (active && isConnectedRef.current) {
+        nextPollTimeout = setTimeout(poll, POLL_INTERVAL_MS);
+      }
     };
 
     poll(); // immediate first frame
-    intervalRef.current = setInterval(poll, POLL_INTERVAL_MS);
 
     return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
+      active = false;
+      currentController?.abort();
+      if (nextPollTimeout !== null) {
+        clearTimeout(nextPollTimeout);
+        nextPollTimeout = null;
       }
       // Revoke last URL on cleanup — use the same 5 s delay so a
       // Strict Mode cleanup+rerun cycle doesn't revoke a URL still in use.
