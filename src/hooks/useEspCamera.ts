@@ -101,6 +101,13 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
           throw new Error('Not an image response');
         }
       }
+      // Consume the response body to confirm actual image data is present,
+      // and use it as the initial frame so polling doesn't need an extra request.
+      const blob = await res.blob();
+      if (blob.size === 0) throw new Error('ESP32 returned an empty frame');
+      const blobUrl = URL.createObjectURL(blob);
+      prevUrlRef.current = blobUrl;
+      setCurrentFrame(blobUrl);
       setIsConnected(true);
       setIsConnecting(false);
       return true;
@@ -140,11 +147,18 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
           return;
         }
         const blob = await res.blob();
+        if (blob.size === 0 || !blob.type.includes('image')) {
+          setIsConnected(false);
+          setError('ESP32 stream interrupted. Reconnect or re-test.');
+          return;
+        }
         const newUrl = URL.createObjectURL(blob);
 
-        // Schedule revocation of previous URL after 1 s
+        // Schedule revocation of previous URL after 5 s — long enough that
+        // React Strict Mode's effect cleanup+rerun cycle never races with a
+        // slow ESP32 response and revokes a URL still in use.
         const old = prevUrlRef.current;
-        if (old) setTimeout(() => URL.revokeObjectURL(old), 1000);
+        if (old) setTimeout(() => URL.revokeObjectURL(old), 5000);
 
         prevUrlRef.current = newUrl;
         setCurrentFrame(newUrl);
@@ -162,17 +176,19 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
-      // Revoke last URL on cleanup — capture value before nulling the ref
+      // Revoke last URL on cleanup — use the same 5 s delay so a
+      // Strict Mode cleanup+rerun cycle doesn't revoke a URL still in use.
       const lastUrl = prevUrlRef.current;
       prevUrlRef.current = null;
-      if (lastUrl) setTimeout(() => URL.revokeObjectURL(lastUrl), 1000);
+      if (lastUrl) setTimeout(() => URL.revokeObjectURL(lastUrl), 5000);
       // Do NOT null currentFrame — keep last frame visible until next connection
     };
   }, [enabled, ip, isConnected]);
 
-  // Reset connected state when IP changes
+  // Reset state when IP changes
   useEffect(() => {
     setIsConnected(false);
+    setCurrentFrame(null);
     setError(null);
   }, [ip]);
 
