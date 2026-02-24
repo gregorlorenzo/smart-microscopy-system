@@ -111,10 +111,13 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
       setIsConnecting(false);
       return true;
     } catch (err: any) {
+      const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError';
       const isNetworkBlock =
-        err?.message === 'Failed to fetch' || err?.name === 'TypeError';
+        !isTimeout && (err?.message === 'Failed to fetch' || err?.name === 'TypeError');
       setError(
-        isNetworkBlock
+        isTimeout
+          ? 'ESP32 timed out — it may be busy capturing a large frame. Try again.'
+          : isNetworkBlock
           ? 'Cannot reach ESP32. Check IP/URL and confirm same WiFi, or use an ngrok tunnel.'
           : `Cannot reach ESP32: ${err?.message ?? 'Unknown error'}`,
       );
@@ -142,13 +145,19 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
     let currentController: AbortController | null = null;
 
     // Require this many consecutive failures before disconnecting.
-    // Guards against React Strict Mode's double-invoke (run→cleanup→run)
-    // where the single stale in-flight fetch from the first run errors out.
+    // 3 gives enough headroom for one or two slow frames caused by motion
+    // (large JPEGs) without counting timeout aborts from React Strict Mode's
+    // double-invoke as real failures.
     let consecutiveFailures = 0;
-    const MAX_FAILURES = 2;
+    const MAX_FAILURES = 3;
 
     const base = buildBaseUrl(ip);
     const url = captureUrl(base);
+
+    const disconnect = (msg: string) => {
+      setIsConnected(false);
+      setError(msg);
+    };
 
     const poll = async () => {
       if (!active || !isConnectedRef.current) return;
@@ -164,8 +173,8 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
         if (!res.ok) {
           consecutiveFailures++;
           if (consecutiveFailures >= MAX_FAILURES) {
-            setIsConnected(false);
-            setError('ESP32 stream interrupted. Reconnect or re-test.');
+            disconnect('ESP32 stream interrupted. Reconnect or re-test.');
+            return; // stop scheduling — isConnected will flip false
           }
         } else {
           const blob = await res.blob();
@@ -174,8 +183,8 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
           if (blob.size === 0 || !blob.type.includes('image')) {
             consecutiveFailures++;
             if (consecutiveFailures >= MAX_FAILURES) {
-              setIsConnected(false);
-              setError('ESP32 stream interrupted. Reconnect or re-test.');
+              disconnect('ESP32 stream interrupted. Reconnect or re-test.');
+              return;
             }
           } else {
             consecutiveFailures = 0;
@@ -194,12 +203,15 @@ export function useEspCamera({ ip, enabled }: UseEspCameraOptions): UseEspCamera
       } catch (err: any) {
         clearTimeout(abortTimer);
         currentController = null;
-        // AbortError means cleanup intentionally cancelled us — not a real failure
-        if (!active || err?.name === 'AbortError') return;
+        // `active` is false only when cleanup intentionally aborted us — stop then.
+        // Any other AbortError (our own timeout timer fired) or network error is a
+        // real failure: count it and keep retrying so motion-heavy scenes that
+        // temporarily push frames past TIMEOUT_MS don't kill the stream.
+        if (!active) return;
         consecutiveFailures++;
         if (consecutiveFailures >= MAX_FAILURES) {
-          setIsConnected(false);
-          setError('ESP32 stream interrupted. Reconnect or re-test.');
+          disconnect('ESP32 stream interrupted. Reconnect or re-test.');
+          return;
         }
       }
 
