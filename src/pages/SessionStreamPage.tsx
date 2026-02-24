@@ -286,7 +286,8 @@ export default function SessionStreamPage() {
         </div>
 
         {/* Setup content */}
-        <div className="flex-1 flex items-center justify-center p-6">
+        <div className="flex-1 overflow-y-auto">
+          <div className="min-h-full flex items-center justify-center p-6">
           <div className="w-full max-w-lg space-y-6">
             <h2 className="text-xl font-semibold text-center">Camera Setup</h2>
 
@@ -397,6 +398,7 @@ export default function SessionStreamPage() {
             >
               Go Live
             </Button>
+          </div>
           </div>
         </div>
       </div>
