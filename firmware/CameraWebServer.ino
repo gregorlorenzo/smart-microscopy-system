@@ -50,8 +50,8 @@ void setup() {
   if (config.pixel_format == PIXFORMAT_JPEG) {
     if (psramFound()) {
       config.jpeg_quality = 10;             // quality 10 = high quality JPEG; fine at 1fps polling
-      config.fb_count = 1;                  // 1 framebuffer is correct for single /capture polling
-      config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;  // GRAB_LATEST with fb_count=1 causes fb_get() to block forever
+      config.fb_count = 2;                  // 2 buffers: camera pre-captures continuously, fb_get() returns immediately
+      config.grab_mode = CAMERA_GRAB_LATEST; // always return the most recently captured frame
     } else {
       // Limit the frame size when PSRAM is not available
       config.frame_size = FRAMESIZE_SVGA;
@@ -115,15 +115,14 @@ void setup() {
   Serial.println("");
   Serial.println("WiFi connected");
 
-  // Warm up: discard frames so AE/AWB settle before the HTTP server accepts
-  // requests. Placed after WiFi so a slow sensor doesn't delay boot.
+  // Warm up: discard a few frames so AE/AWB settle before the first request.
+  // With fb_count=2+GRAB_LATEST the camera is already pre-capturing, so
+  // 5 frames is enough. Placed after WiFi so boot time isn't extended.
   Serial.print("Warming up camera");
-  for (int i = 0; i < 15; i++) {
+  for (int i = 0; i < 5; i++) {
     camera_fb_t *fb = esp_camera_fb_get();
-    if (fb) {
-      esp_camera_fb_return(fb);
-    }
-    delay(100);
+    if (fb) esp_camera_fb_return(fb);
+    delay(50);
     Serial.print(".");
   }
   Serial.println(" done");
