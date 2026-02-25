@@ -39,7 +39,7 @@ void setup() {
   config.pin_sccb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 20000000;           // restored to 20MHz — 10MHz was a workaround for MJPEG streaming (no longer used)
+  config.xclk_freq_hz = 10000000;           // 10MHz — this board's OV2640 is unstable at 20MHz (hangs fb_get)
   config.frame_size = FRAMESIZE_VGA;        // changed: was UXGA
   config.pixel_format = PIXFORMAT_JPEG;     // for streaming
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
@@ -49,9 +49,9 @@ void setup() {
 
   if (config.pixel_format == PIXFORMAT_JPEG) {
     if (psramFound()) {
-      config.jpeg_quality = 10;             // quality 10 = high quality JPEG; fine at 1fps polling (was 12 for MJPEG bandwidth)
+      config.jpeg_quality = 10;             // quality 10 = high quality JPEG; fine at 1fps polling
       config.fb_count = 1;                  // 1 framebuffer is correct for single /capture polling
-      config.grab_mode = CAMERA_GRAB_LATEST;
+      config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;  // GRAB_LATEST with fb_count=1 causes fb_get() to block forever
     } else {
       // Limit the frame size when PSRAM is not available
       config.frame_size = FRAMESIZE_SVGA;
@@ -78,15 +78,6 @@ void setup() {
   }
 
   sensor_t *s = esp_camera_sensor_get();
-
-  // Warm up the sensor: discard the first several frames so auto-exposure
-  // and auto-white-balance settle before the first /capture request arrives.
-  // Without this, the first fb_get() after boot can hang for 15+ seconds.
-  for (int i = 0; i < 10; i++) {
-    camera_fb_t *warmup = esp_camera_fb_get();
-    if (warmup) esp_camera_fb_return(warmup);
-    delay(50);
-  }
 
   // initial sensors are flipped vertically and colors are a bit saturated
   if (s->id.PID == OV3660_PID) {
@@ -123,6 +114,19 @@ void setup() {
   }
   Serial.println("");
   Serial.println("WiFi connected");
+
+  // Warm up: discard frames so AE/AWB settle before the HTTP server accepts
+  // requests. Placed after WiFi so a slow sensor doesn't delay boot.
+  Serial.print("Warming up camera");
+  for (int i = 0; i < 15; i++) {
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (fb) {
+      esp_camera_fb_return(fb);
+    }
+    delay(100);
+    Serial.print(".");
+  }
+  Serial.println(" done");
 
   startCameraServer();
 
