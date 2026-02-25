@@ -78,6 +78,16 @@ void setup() {
   }
 
   sensor_t *s = esp_camera_sensor_get();
+
+  // Warm up the sensor: discard the first several frames so auto-exposure
+  // and auto-white-balance settle before the first /capture request arrives.
+  // Without this, the first fb_get() after boot can hang for 15+ seconds.
+  for (int i = 0; i < 10; i++) {
+    camera_fb_t *warmup = esp_camera_fb_get();
+    if (warmup) esp_camera_fb_return(warmup);
+    delay(50);
+  }
+
   // initial sensors are flipped vertically and colors are a bit saturated
   if (s->id.PID == OV3660_PID) {
     s->set_vflip(s, 1);        // flip it back
