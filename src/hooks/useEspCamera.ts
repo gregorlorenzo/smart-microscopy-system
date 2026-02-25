@@ -66,7 +66,7 @@ interface UseEspCameraOptions {
 
 export interface UseEspCameraResult {
   /**
-   * Latest preview frame as a data URL, updated every ~1 s after testConnection.
+   * Latest preview frame as a data URL, updated every ~1 s while polling.
    * Use as <img src={previewFrame} /> for the live preview and viewer broadcast.
    * Null until testConnection succeeds.
    */
@@ -81,8 +81,17 @@ export interface UseEspCameraResult {
   isConnecting: boolean;
   /** Human-readable error message, or null when healthy */
   error: string | null;
-  /** Test reachability for a given IP. Starts the polling loop on success. */
+  /**
+   * Test reachability for a given IP. Sets isConnected + previewFrame on
+   * success but does NOT start the polling loop — call startPolling() separately
+   * (e.g. when going live) so the setup screen never has concurrent /capture
+   * requests blocking the ESP32's HTTP server.
+   */
   testConnection: (ip: string) => Promise<boolean>;
+  /** Start the 1fps polling loop. Call when the presenter goes live. */
+  startPolling: () => void;
+  /** Stop the polling loop. Call when leaving the live screen. */
+  stopPolling: () => void;
 }
 
 export function useEspCamera({ ip }: UseEspCameraOptions): UseEspCameraResult {
@@ -153,7 +162,8 @@ export function useEspCamera({ ip }: UseEspCameraOptions): UseEspCameraResult {
       baseUrlRef.current = base;
       setIsConnected(true);
       setIsConnecting(false);
-      startPolling();
+      // Do NOT start polling here — the caller controls when to start
+      // so the setup screen never has a concurrent /capture in-flight.
       return true;
     } catch (err: any) {
       const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError';
@@ -193,5 +203,5 @@ export function useEspCamera({ ip }: UseEspCameraOptions): UseEspCameraResult {
     baseUrlRef.current = '';
   }, [ip, stopPolling]);
 
-  return { previewFrame, captureStill, isConnected, isConnecting, error, testConnection };
+  return { previewFrame, captureStill, isConnected, isConnecting, error, testConnection, startPolling, stopPolling };
 }

@@ -75,6 +75,8 @@ export default function SessionStreamPage() {
     isConnecting: espConnecting,
     error: espError,
     testConnection: testEspConnection,
+    startPolling: startEspPolling,
+    stopPolling: stopEspPolling,
   } = useEspCamera({ ip: espIp });
 
   // Mirror isLive into a ref so cleanup callbacks can read the current value
@@ -181,6 +183,7 @@ export default function SessionStreamPage() {
 
   // ── Navigation handlers ────────────────────────────────────────────────────────────────────────────────────
   const handleBack = () => {
+    stopEspPolling();
     stopBroadcasting();
     navigate(`/session/${code}`);
   };
@@ -398,7 +401,10 @@ export default function SessionStreamPage() {
             <Button
               className="w-full"
               size="lg"
-              onClick={() => setIsLive(true)}
+              onClick={() => {
+                if (cameraSource === 'esp32') startEspPolling();
+                setIsLive(true);
+              }}
               disabled={!canGoLive}
             >
               Go Live
