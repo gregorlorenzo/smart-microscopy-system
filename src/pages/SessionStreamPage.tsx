@@ -69,44 +69,13 @@ export default function SessionStreamPage() {
   const { videoRef, videoElRef, startCamera, stopCamera, isStreaming } = useCamera();
 
   const {
-    streamUrl: espStreamUrl,
+    previewFrame: espPreviewFrame,
     captureStill: captureEspStill,
     isConnected: espConnected,
     isConnecting: espConnecting,
     error: espError,
     testConnection: testEspConnection,
   } = useEspCamera({ ip: espIp });
-
-  // Ref to the live MJPEG <img> — used to draw frames to canvas without an
-  // extra /capture request (eliminates camera resource contention on the ESP32)
-  const espImgRef = useRef<HTMLImageElement>(null);
-
-  // Incremented to force React to remount the <img> and reconnect the stream
-  const [espStreamRetryKey, setEspStreamRetryKey] = useState(0);
-
-  // Draw the current MJPEG frame to a canvas and return a JPEG data URL.
-  // Returns null if the image isn't ready or canvas is tainted (CORS).
-  const captureFromMjpeg = useCallback((): string | null => {
-    const img = espImgRef.current;
-    if (!img || !img.naturalWidth || !img.naturalHeight) return null;
-    const canvas = document.createElement('canvas');
-    canvas.width = img.naturalWidth;
-    canvas.height = img.naturalHeight;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
-    try {
-      ctx.drawImage(img, 0, 0);
-      return canvas.toDataURL('image/jpeg', 0.8);
-    } catch {
-      return null; // SecurityError if ESP32 stream lacks CORS headers
-    }
-  }, []);
-
-  // Auto-reconnect when the MJPEG stream drops — remount the <img> after 2 s
-  // instead of permanently killing the stream.
-  const handleEspStreamError = useCallback(() => {
-    setTimeout(() => setEspStreamRetryKey((k) => k + 1), 2000);
-  }, []);
 
   // Mirror isLive into a ref so cleanup callbacks can read the current value
   // without being listed in effect dependency arrays.
@@ -131,17 +100,13 @@ export default function SessionStreamPage() {
     }
   }, [isPresenter, isLive, cameraSource, isStreaming, startBroadcasting]);
 
-  // ESP32: broadcast a frame to viewers every second while live.
-  // Draws from the MJPEG <img> directly — no extra /capture request,
-  // so the ESP32 sensor is never hit by two simultaneous grabs.
+  // ESP32: broadcast each new polling frame to viewers while live.
+  // espPreviewFrame updates every ~1 s from the polling loop in useEspCamera,
+  // so this effect fires at the same rate — no separate interval needed.
   useEffect(() => {
-    if (!isPresenter || !isLive || cameraSource !== 'esp32') return;
-    const id = setInterval(() => {
-      const frame = captureFromMjpeg();
-      if (frame) broadcastImage(frame);
-    }, 1000);
-    return () => clearInterval(id);
-  }, [isPresenter, isLive, cameraSource, captureFromMjpeg, broadcastImage]);
+    if (!isPresenter || !isLive || cameraSource !== 'esp32' || !espPreviewFrame) return;
+    broadcastImage(espPreviewFrame);
+  }, [isPresenter, isLive, cameraSource, espPreviewFrame, broadcastImage]);
 
   // ── Annotation canvas ────────────────────────────────────────────────────────────────────────────────────────────
   const {
@@ -228,9 +193,9 @@ export default function SessionStreamPage() {
       let baseFrame: string;
       if (isPresenter) {
         if (cameraSource === 'esp32') {
-          // Draw from the live MJPEG frame — no extra request to the ESP32.
-          // Fall back to /capture only if the canvas draw fails (e.g. CORS).
-          baseFrame = captureFromMjpeg() ?? (await captureEspStill()) ?? '';
+          // Use the last polled preview frame (at most ~1 s old) — instant, no extra request.
+          // Fall back to a fresh /capture only if no preview frame is available yet.
+          baseFrame = espPreviewFrame ?? (await captureEspStill()) ?? '';
           if (!baseFrame) return;
         } else {
           if (!videoElRef.current) return;
@@ -246,7 +211,7 @@ export default function SessionStreamPage() {
     } catch (err) {
       console.error('[Capture] Failed:', err);
     }
-  }, [isPresenter, cameraSource, captureFromMjpeg, captureEspStill, currentFrame, exportImage]);
+  }, [isPresenter, cameraSource, espPreviewFrame, captureEspStill, currentFrame, exportImage]);
 
   const handleSave = useCallback(async (data: { name: string; description: string; tags: string[] }) => {
     if (!capturedImage) return;
@@ -415,14 +380,11 @@ export default function SessionStreamPage() {
                 </>
               )}
               {cameraSource === 'esp32' && (
-                espStreamUrl ? (
+                espPreviewFrame ? (
                   <img
-                    key={espStreamRetryKey}
-                    src={espStreamUrl}
+                    src={espPreviewFrame}
                     alt="ESP32-CAM preview"
-                    crossOrigin="anonymous"
                     className="w-full h-full object-cover"
-                    onError={handleEspStreamError}
                   />
                 ) : (
                   <p className="text-sm text-gray-500">
@@ -508,15 +470,11 @@ export default function SessionStreamPage() {
                 />
               )}
 
-              {/* Presenter: ESP32-CAM MJPEG feed */}
-              {isPresenter && cameraSource === 'esp32' && espStreamUrl && (
+              {/* Presenter: ESP32-CAM polling preview */}
+              {isPresenter && cameraSource === 'esp32' && espPreviewFrame && (
                 <img
-                  key={espStreamRetryKey}
-                  ref={espImgRef}
-                  src={espStreamUrl}
+                  src={espPreviewFrame}
                   alt="ESP32-CAM feed"
-                  crossOrigin="anonymous"
-                  onError={handleEspStreamError}
                   style={{ width: CANVAS_W, height: CANVAS_H, objectFit: 'cover' }}
                 />
               )}
