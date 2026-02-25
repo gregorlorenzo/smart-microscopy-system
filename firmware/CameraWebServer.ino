@@ -39,18 +39,18 @@ void setup() {
   config.pin_sccb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 20000000;
+  config.xclk_freq_hz = 20000000;           // restored to 20MHz — 10MHz was a workaround for MJPEG streaming (no longer used)
   config.frame_size = FRAMESIZE_VGA;        // changed: was UXGA
   config.pixel_format = PIXFORMAT_JPEG;     // for streaming
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 12;
+  config.jpeg_quality = 10;
   config.fb_count = 1;
 
   if (config.pixel_format == PIXFORMAT_JPEG) {
     if (psramFound()) {
-      config.jpeg_quality = 25;             // changed: was 10 — smaller frames, less WiFi load
-      config.fb_count = 2;
+      config.jpeg_quality = 10;             // quality 10 = high quality JPEG; fine at 1fps polling (was 12 for MJPEG bandwidth)
+      config.fb_count = 1;                  // 1 framebuffer is correct for single /capture polling
       config.grab_mode = CAMERA_GRAB_LATEST;
     } else {
       // Limit the frame size when PSRAM is not available

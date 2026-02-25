@@ -235,7 +235,8 @@ static esp_err_t stream_handler(httpd_req_t *req) {
     fb = esp_camera_fb_get();
     if (!fb) {
       log_e("Camera capture failed");
-      res = ESP_FAIL;
+      vTaskDelay(pdMS_TO_TICKS(100));
+      continue;
     } else {
       _timestamp.tv_sec = fb->timestamp.tv_sec;
       _timestamp.tv_usec = fb->timestamp.tv_usec;
@@ -245,7 +246,8 @@ static esp_err_t stream_handler(httpd_req_t *req) {
         fb = NULL;
         if (!jpeg_converted) {
           log_e("JPEG compression failed");
-          res = ESP_FAIL;
+          vTaskDelay(pdMS_TO_TICKS(100));
+          continue;
         }
       } else {
         _jpg_buf_len = fb->len;
